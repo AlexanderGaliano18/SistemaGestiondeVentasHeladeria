@@ -9,6 +9,9 @@ import pytz
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Sistema Heladería Master", layout="wide", page_icon="🍦")
 
+# --- NOMBRE DEL ARCHIVO ---
+DB_NAME = 'heladeria_v8_pdfs.db'
+
 # --- HORA PERÚ ---
 def get_hora_peru():
     return datetime.now(pytz.timezone('America/Lima'))
@@ -16,15 +19,11 @@ def get_hora_peru():
 # --- ESTILOS ---
 st.markdown("""
 <style>
-    /* Métricas y Contenedores */
     .stMetric { background-color: rgba(128, 128, 128, 0.1); border: 1px solid rgba(128, 128, 128, 0.2); padding: 10px; border-radius: 5px; }
-    
-    /* Cajas de Colores (Transparencia para Modo Oscuro) */
     .merma-box { background-color: rgba(255, 75, 75, 0.1); border-left: 5px solid #ff4b4b; padding: 15px; border-radius: 5px; }
     .compra-box { background-color: rgba(40, 167, 69, 0.1); border-left: 5px solid #28a745; padding: 15px; border-radius: 5px; }
     .cierre-box { background-color: rgba(255, 193, 7, 0.1); border-left: 5px solid #ffc107; padding: 15px; border-radius: 5px; }
-    
-    /* Total Display */
+    .respaldo-box { background-color: rgba(0, 123, 255, 0.1); border: 1px solid #007bff; padding: 15px; border-radius: 5px; }
     .total-display { font-size: 26px; font-weight: bold; text-align: right; padding: 10px; border-top: 1px solid rgba(128, 128, 128, 0.2); }
     
     /* Tabs */
@@ -36,7 +35,7 @@ st.markdown("""
 
 # --- BASE DE DATOS ---
 def init_db():
-    conn = sqlite3.connect('heladeria_v7_final.db')
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS menu (id INTEGER PRIMARY KEY, nombre TEXT, precio REAL, categoria TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS insumos (id INTEGER PRIMARY KEY, nombre TEXT, cantidad REAL, unidad TEXT, minimo REAL DEFAULT 10)''')
@@ -45,11 +44,15 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS mermas (id INTEGER PRIMARY KEY, insumo_nombre TEXT, cantidad REAL, razon TEXT, fecha TIMESTAMP)''')
     c.execute('''CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY, insumo_nombre TEXT, cantidad REAL, tipo TEXT, razon TEXT, fecha TIMESTAMP)''')
     c.execute('''CREATE TABLE IF NOT EXISTS cierres (id INTEGER PRIMARY KEY, fecha_cierre TIMESTAMP, total_turno REAL, responsable TEXT)''')
+    
+    # NUEVA TABLA PARA GUARDAR PDFs (BLOB)
+    c.execute('''CREATE TABLE IF NOT EXISTS reportes_pdf (id INTEGER PRIMARY KEY, fecha TIMESTAMP, nombre_archivo TEXT, pdf_data BLOB)''')
+    
     conn.commit()
     conn.close()
 
 def run_query(query, params=(), return_data=False):
-    conn = sqlite3.connect('heladeria_v7_final.db')
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     try:
         c.execute(query, params)
@@ -78,6 +81,12 @@ def cerrar_turno_db(total, responsable):
     ahora = get_hora_peru()
     run_query("INSERT INTO cierres (fecha_cierre, total_turno, responsable) VALUES (?,?,?)", (ahora, total, responsable))
 
+# --- GESTIÓN DE PDFs EN BD ---
+def guardar_pdf_en_bd(nombre_archivo, pdf_bytes):
+    ahora = get_hora_peru()
+    # Guardamos los bytes directamente en la columna BLOB
+    run_query("INSERT INTO reportes_pdf (fecha, nombre_archivo, pdf_data) VALUES (?,?,?)", (ahora, nombre_archivo, pdf_bytes))
+
 # --- LOG MOVIMIENTOS ---
 def log_movimiento(insumo, cantidad, tipo, razon):
     ahora = get_hora_peru()
@@ -87,7 +96,7 @@ def log_movimiento(insumo, cantidad, tipo, razon):
 # --- PROCESAR VENTA ---
 def procesar_descuento_stock(producto_nombre, cantidad_vendida, cant_conos_extra, cant_toppings):
     mensajes = []
-    conn = sqlite3.connect('heladeria_v7_final.db')
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     ahora = get_hora_peru()
     
@@ -179,11 +188,12 @@ def main():
     
     opcion = st.sidebar.radio("Navegación", [
         "🛒 Caja (Vender)", 
-        "🔒 Cierre de Caja (Corte)", 
+        "🔒 Cierre de Caja", 
         "📦 Inventario", 
         "📉 Mermas", 
         "📝 Productos", 
-        "📊 Reportes Históricos"
+        "📊 Reportes",
+        "💾 Respaldo (Guardar/Cargar)"
     ])
 
     # -----------------------------------------------------------
@@ -192,7 +202,6 @@ def main():
     if opcion == "🛒 Caja (Vender)":
         st.header("Punto de Venta")
         
-        # --- CALCULO VENTAS ACTUALES ---
         ultimo_cierre = get_ultimo_cierre()
         df_todas = run_query("SELECT * FROM ventas", return_data=True)
         total_turno_actual = 0.0
@@ -266,7 +275,7 @@ def main():
     # -----------------------------------------------------------
     # 2. CIERRE DE CAJA
     # -----------------------------------------------------------
-    elif opcion == "🔒 Cierre de Caja (Corte)":
+    elif opcion == "🔒 Cierre de Caja":
         st.header("Cierre de Caja / Corte")
         st.markdown("""<div class="cierre-box">⚠️ Al cerrar caja, el contador <b>se reinicia a 0</b>.</div>""", unsafe_allow_html=True)
         st.divider()
@@ -301,20 +310,26 @@ def main():
                 if responsable:
                     cerrar_turno_db(total_turno, responsable)
                     try:
-                        ahora_str = get_hora_peru().strftime('%d-%m-%Y %H:%M')
-                        pdf = generar_pdf(df_turno, total_turno, ahora_str, f"Cierre - {responsable}")
-                        st.download_button("⬇️ Descargar Reporte Cierre", pdf, f"Cierre_{ahora_str}.pdf", "application/pdf")
-                        st.success("✅ Caja Cerrada. Contador en 0.")
-                    except:
-                        st.error("Caja cerrada. Error en PDF.")
+                        ahora_str = get_hora_peru().strftime('%d-%m-%Y_%H-%M')
+                        nombre_pdf = f"Cierre_{ahora_str}_{responsable}.pdf"
+                        
+                        # Generar PDF
+                        pdf_bytes = generar_pdf(df_turno, total_turno, ahora_str, f"Cierre - {responsable}")
+                        
+                        # GUARDAR PDF EN BASE DE DATOS (NUEVO)
+                        guardar_pdf_en_bd(nombre_pdf, pdf_bytes)
+                        
+                        st.download_button("⬇️ Descargar Reporte Cierre", pdf_bytes, nombre_pdf, "application/pdf")
+                        st.success("✅ Caja Cerrada. Contador en 0. PDF Guardado en Historial.")
+                    except Exception as e:
+                        st.error(f"Caja cerrada, pero error PDF: {e}")
                 else:
                     st.warning("Escribe nombre responsable.")
         
-        # --- AQUÍ AGREGUÉ LA OPCIÓN DE ELIMINAR ---
+        # Eliminar venta antes de cierre
         if not df_turno.empty:
             st.divider()
             with st.expander("📝 Gestionar / Eliminar Ventas del Turno Actual"):
-                st.caption("Si te equivocaste al cobrar, puedes borrar la venta aquí antes de cerrar.")
                 for i, row in df_turno.iterrows():
                     cols = st.columns([1, 3, 2, 2, 1])
                     cols[0].write(row['fecha'].strftime('%H:%M'))
@@ -355,8 +370,9 @@ def main():
                         t_dato = c2.radio("Medida", ["Unidades", "Decimales"], horizontal=True)
                         step = 1.0 if "Unidades" in t_dato else 0.1
                         fmt = "%d" if "Unidades" in t_dato else "%.2f"
+                        min_val = 1.0 if "Unidades" in t_dato else 0.1
                         
-                        cant = st.number_input("Cantidad", step=step, format=fmt, min_value=0.1)
+                        cant = st.number_input("Cantidad", step=step, format=fmt, min_value=min_val)
                         nota = st.text_input("Nota")
                         if st.form_submit_button("Sumar"):
                             run_query("UPDATE insumos SET cantidad=cantidad+? WHERE nombre=?", (cant, ins))
@@ -401,11 +417,12 @@ def main():
                 i_sel = c1.selectbox("Insumo", df_ins['nombre'].unique())
                 
                 t_dato = c2.radio("Medida", ["Unidades", "Decimales"], horizontal=True)
-                step = 1.0 if "Unidades" in t_dato else 0.1
-                fmt = "%d" if "Unidades" in t_dato else "%.2f"
-                min_val = 1.0 if "Unidades" in t_dato else 0.1
+                if "Unidades" in t_dato:
+                    step_m, min_m, fmt_m, val_def = 1, 1, "%d", 1
+                else:
+                    step_m, min_m, fmt_m, val_def = 0.1, 0.1, "%.2f", 0.1
                 
-                q = st.number_input("Cantidad", step=step, format=fmt, min_value=min_val)
+                q = st.number_input("Cantidad", step=step_m, format=fmt_m, min_value=min_m, value=val_def)
                 r = st.text_input("Razón")
                 if st.form_submit_button("Registrar"):
                     run_query("UPDATE insumos SET cantidad=cantidad-? WHERE nombre=?", (q, i_sel))
@@ -423,7 +440,6 @@ def main():
                 n = st.text_input("Nombre")
                 p = st.number_input("Precio", 0.0)
                 cat = st.selectbox("Cat", ["Helado", "Paleta", "Bebida", "Otro"])
-                
                 vinc = st.checkbox("Inventario", True)
                 iid = None
                 qg = 0
@@ -456,10 +472,9 @@ def main():
     # -----------------------------------------------------------
     # 6. REPORTES HISTÓRICOS
     # -----------------------------------------------------------
-    elif opcion == "📊 Reportes Históricos":
+    elif opcion == "📊 Reportes":
         st.header("Historial y Reportes")
-        
-        tab_dia, tab_cierres = st.tabs(["Ventas del Día (Global)", "Historial de Cierres"])
+        tab_dia, tab_cierres, tab_pdfs = st.tabs(["Ventas del Día (Global)", "Historial de Cierres", "🗄️ Historial PDFs"])
         
         hoy = get_hora_peru().date()
         
@@ -469,7 +484,6 @@ def main():
             if not df_v.empty:
                 df_v['fecha'] = pd.to_datetime(df_v['fecha']).dt.tz_convert('America/Lima')
                 v_hoy = df_v[df_v['fecha'].dt.date == hoy]
-                
                 tot = v_hoy['total'].sum()
                 st.metric("Total Día", f"S/ {tot:,.2f}")
                 
@@ -480,16 +494,13 @@ def main():
                 except: pass
                 
                 buff = io.BytesIO()
-                
-                # Excel Fix
                 v_hoy_excel = v_hoy.copy()
                 v_hoy_excel['fecha'] = v_hoy_excel['fecha'].astype(str)
                 with pd.ExcelWriter(buff, engine='openpyxl') as w: v_hoy_excel.to_excel(w, index=False)
                 c2.download_button("Excel Día", buff.getvalue(), f"Dia_{hoy}.xlsx")
                 
-                # --- BOTÓN PARA ELIMINAR VENTAS ANTIGUAS ---
+                # ELIMINAR VENTA HISTÓRICA
                 with st.expander("🛠️ Gestionar / Eliminar Ventas Históricas"):
-                    st.caption("Si necesitas borrar una venta antigua por error.")
                     for i, r in v_hoy.iterrows():
                         cols = st.columns([1, 3, 2, 2, 1])
                         cols[0].write(r['fecha'].strftime('%H:%M'))
@@ -507,7 +518,70 @@ def main():
                 df_c['fecha_cierre'] = pd.to_datetime(df_c['fecha_cierre']).dt.tz_convert('America/Lima').dt.strftime('%d/%m/%Y %H:%M')
                 st.dataframe(df_c, use_container_width=True)
             else:
-                st.info("No hay cierres registrados.")
+                st.info("No hay cierres.")
+
+        # --- NUEVA PESTAÑA DE PDFs ---
+        with tab_pdfs:
+            st.subheader("Reportes PDF Guardados")
+            st.caption("Estos archivos están guardados dentro de la base de datos.")
+            
+            df_pdfs = run_query("SELECT id, fecha, nombre_archivo, pdf_data FROM reportes_pdf ORDER BY id DESC", return_data=True)
+            
+            if not df_pdfs.empty:
+                for index, row in df_pdfs.iterrows():
+                    col1, col2, col3 = st.columns([3, 1, 1])
+                    
+                    with col1:
+                        st.write(f"📄 **{row['nombre_archivo']}**")
+                        # Fecha legible
+                        fecha_pdf = pd.to_datetime(row['fecha'])
+                        st.caption(f"Creado: {fecha_pdf.strftime('%d/%m/%Y %H:%M')}")
+                    
+                    with col2:
+                        st.download_button(
+                            label="⬇️ Descargar",
+                            data=row['pdf_data'],
+                            file_name=row['nombre_archivo'],
+                            mime="application/pdf",
+                            key=f"down_pdf_{row['id']}"
+                        )
+                    
+                    with col3:
+                        if st.button("🗑️ Borrar", key=f"del_pdf_{row['id']}"):
+                            run_query("DELETE FROM reportes_pdf WHERE id=?", (row['id'],))
+                            st.success("Borrado.")
+                            st.rerun()
+                    st.divider()
+            else:
+                st.info("No hay PDFs guardados en el historial.")
+
+    # -----------------------------------------------------------
+    # 7. RESPALDO
+    # -----------------------------------------------------------
+    elif opcion == "💾 Respaldo (Guardar/Cargar)":
+        st.header("Copia de Seguridad")
+        st.markdown("""<div class='respaldo-box'><b>⚠️ IMPORTANTE:</b> Descarga tu copia cada noche. Ahora incluye también los PDFs históricos.</div>""", unsafe_allow_html=True)
+        st.divider()
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("1. Descargar (Guardar)")
+            if st.button("⬇️ Generar archivo de respaldo"):
+                try:
+                    with open(DB_NAME, "rb") as fp:
+                        st.download_button(label="💾 Click para Descargar .db", data=fp, file_name=f"Respaldo_{get_hora_peru().strftime('%Y-%m-%d')}.db", mime="application/octet-stream")
+                except:
+                    st.error("No se encontró la base de datos.")
+
+        with c2:
+            st.subheader("2. Subir (Restaurar)")
+            uploaded_file = st.file_uploader("Sube aquí tu archivo .db", type="db")
+            if uploaded_file is not None:
+                if st.button("🔄 Restaurar Datos"):
+                    with open(DB_NAME, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    st.success("¡Datos restaurados con éxito! La página se recargará.")
+                    st.rerun()
 
 if __name__ == '__main__':
     main()
