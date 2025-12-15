@@ -5,38 +5,32 @@ from datetime import datetime
 import io
 from fpdf import FPDF
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Heladería Artesanal Pro", layout="wide", page_icon="🍦")
+# --- CONFIGURACIÓN ---
+st.set_page_config(page_title="Heladería CRUD", layout="wide", page_icon="🍦")
 
-# --- ESTILOS VISUALES ---
+# --- ESTILOS ---
 st.markdown("""
 <style>
-    .stMetric { background-color: #f8f9fa; border-radius: 10px; padding: 10px; border: 1px solid #e0e0e0; }
-    .alerta-box { background-color: #ffcccc; color: #cc0000; padding: 15px; border-radius: 8px; margin-bottom: 15px; font-weight: bold; border-left: 5px solid #cc0000; }
-    .estrella-box { background-color: #e6f7ff; color: #0066cc; padding: 15px; border-radius: 8px; margin-bottom: 15px; text-align: center; border: 1px solid #b3e0ff; }
-    .success-box { background-color: #d4edda; color: #155724; padding: 10px; border-radius: 5px; margin-bottom: 10px; }
+    .stMetric { border: 1px solid #ddd; padding: 10px; border-radius: 5px; }
+    .success-msg { color: green; font-weight: bold; }
+    .warning-msg { color: orange; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- BASE DE DATOS ---
 def init_db():
-    conn = sqlite3.connect('heladeria_pro.db')
+    conn = sqlite3.connect('heladeria_crud.db')
     c = conn.cursor()
-    # 1. Menú
+    # Tablas
     c.execute('''CREATE TABLE IF NOT EXISTS menu (id INTEGER PRIMARY KEY, nombre TEXT, precio REAL, categoria TEXT)''')
-    # 2. Insumos (Inventario)
     c.execute('''CREATE TABLE IF NOT EXISTS insumos (id INTEGER PRIMARY KEY, nombre TEXT, cantidad REAL, unidad TEXT, minimo REAL DEFAULT 10)''')
-    # 3. Recetas (Vínculo)
     c.execute('''CREATE TABLE IF NOT EXISTS recetas (id INTEGER PRIMARY KEY, menu_id INTEGER, insumo_id INTEGER, cantidad_insumo REAL)''')
-    # 4. Ventas
-    c.execute('''CREATE TABLE IF NOT EXISTS ventas (id INTEGER PRIMARY KEY, producto TEXT, precio_base REAL, cantidad INTEGER, extras REAL, total REAL, metodo_pago TEXT, fecha TIMESTAMP)''')
-    # 5. Mermas
-    c.execute('''CREATE TABLE IF NOT EXISTS mermas (id INTEGER PRIMARY KEY, insumo TEXT, cantidad REAL, razon TEXT, fecha TIMESTAMP)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS ventas (id INTEGER PRIMARY KEY, producto_nombre TEXT, precio_base REAL, cantidad INTEGER, extras REAL, total REAL, metodo_pago TEXT, fecha TIMESTAMP)''')
     conn.commit()
     conn.close()
 
 def run_query(query, params=(), return_data=False):
-    conn = sqlite3.connect('heladeria_pro.db')
+    conn = sqlite3.connect('heladeria_crud.db')
     c = conn.cursor()
     try:
         c.execute(query, params)
@@ -52,85 +46,55 @@ def run_query(query, params=(), return_data=False):
             return last_id
     except Exception as e:
         conn.close()
-        st.error(f"Error en Base de Datos: {e}")
+        st.error(f"Error BD: {e}")
         return None
 
-# --- LÓGICA DE DESCUENTO DE INVENTARIO (CRUCIAL) ---
-def procesar_venta_inventario(nombre_producto, cantidad_vendida, tiene_cono_extra, tiene_topping):
-    conn = sqlite3.connect('heladeria_pro.db')
+# --- LÓGICA DE INVENTARIO (FIXED) ---
+def procesar_descuento_stock(producto_nombre, cantidad_vendida, tiene_cono, tiene_top):
+    """
+    Busca el producto por nombre, encuentra su receta y descuenta el stock.
+    Devuelve una lista de mensajes de lo que hizo para mostrar al usuario.
+    """
+    mensajes = []
+    conn = sqlite3.connect('heladeria_crud.db')
     c = conn.cursor()
-    msg_debug = []
     
-    # 1. Buscar ID del producto
-    c.execute("SELECT id FROM menu WHERE nombre = ?", (nombre_producto,))
-    prod_res = c.fetchone()
+    # 1. Buscar ID del producto en el Menú
+    c.execute("SELECT id FROM menu WHERE nombre = ?", (producto_nombre,))
+    res_prod = c.fetchone()
     
-    if prod_res:
-        prod_id = prod_res[0]
-        # 2. Buscar qué insumos gasta (RECETA)
-        c.execute("SELECT insumo_id, cantidad_insumo FROM recetas WHERE menu_id = ?", (prod_id,))
+    if res_prod:
+        prod_id = res_prod[0]
+        # 2. Buscar si tiene receta
+        c.execute("SELECT r.insumo_id, r.cantidad_insumo, i.nombre FROM recetas r JOIN insumos i ON r.insumo_id = i.id WHERE r.menu_id = ?", (prod_id,))
         ingredientes = c.fetchall()
         
         if ingredientes:
-            for insumo_id, cant_unitaria in ingredientes:
-                total_a_descontar = cant_unitaria * cantidad_vendida
-                # Ejecutar descuento
-                c.execute("UPDATE insumos SET cantidad = cantidad - ? WHERE id = ?", (total_a_descontar, insumo_id))
-                
-                # Obtener nombre del insumo para confirmar
-                c.execute("SELECT nombre, cantidad FROM insumos WHERE id = ?", (insumo_id,))
-                datos_insumo = c.fetchone()
-                if datos_insumo:
-                    msg_debug.append(f"Stock {datos_insumo[0]}: -{total_a_descontar} (Quedan: {datos_insumo[1]})")
+            for insumo_id, cant_receta, nom_insumo in ingredientes:
+                total_bajar = cant_receta * cantidad_vendida
+                c.execute("UPDATE insumos SET cantidad = cantidad - ? WHERE id = ?", (total_bajar, insumo_id))
+                mensajes.append(f"📉 {nom_insumo}: -{total_bajar}")
         else:
-            msg_debug.append(f"⚠️ El producto '{nombre_producto}' no tiene insumos vinculados.")
-            
-    # 3. Descontar Extras (Genéricos)
-    if tiene_cono_extra:
-        # Busca insumo que contenga "Cono" o "Barquillo"
-        c.execute("SELECT id, nombre FROM insumos WHERE nombre LIKE '%Cono%' OR nombre LIKE '%Barquillo%' LIMIT 1")
-        res_cono = c.fetchone()
-        if res_cono:
-            c.execute("UPDATE insumos SET cantidad = cantidad - ? WHERE id = ?", (cantidad_vendida, res_cono[0]))
-            msg_debug.append(f"Extra: -{cantidad_vendida} {res_cono[1]}")
-            
-    if tiene_topping:
-        # Busca insumo que contenga "Topping"
-        c.execute("SELECT id, nombre FROM insumos WHERE nombre LIKE '%Topping%' LIMIT 1")
-        res_top = c.fetchone()
-        if res_top:
-            c.execute("UPDATE insumos SET cantidad = cantidad - ? WHERE id = ?", (cantidad_vendida, res_top[0]))
-            msg_debug.append(f"Extra: -{cantidad_vendida} {res_top[1]}")
+            mensajes.append(f"ℹ️ {producto_nombre} no está vinculado a ningún insumo (solo venta monetaria).")
+    
+    # 3. Extras
+    if tiene_cono:
+        c.execute("UPDATE insumos SET cantidad = cantidad - ? WHERE nombre LIKE '%Cono%' OR nombre LIKE '%Barquillo%'", (cantidad_vendida,))
+        mensajes.append(f"📉 Extra Cono: -{cantidad_vendida}")
+    
+    if tiene_top:
+        c.execute("UPDATE insumos SET cantidad = cantidad - ? WHERE nombre LIKE '%Topping%'", (cantidad_vendida,))
+        mensajes.append(f"📉 Extra Topping: -{cantidad_vendida}")
 
     conn.commit()
     conn.close()
-    return msg_debug
-
-# --- FUNCIONES AUXILIARES ---
-def obtener_alertas():
-    df = run_query("SELECT nombre, cantidad, minimo FROM insumos", return_data=True)
-    alertas = []
-    if not df.empty:
-        for _, row in df.iterrows():
-            if row['cantidad'] <= (row['minimo'] / 2): # Rojo crítico
-                alertas.append(f"🔴 {row['nombre']} (Quedan: {row['cantidad']})")
-            elif row['cantidad'] <= row['minimo']: # Amarillo alerta
-                alertas.append(f"🟡 {row['nombre']} (Quedan: {row['cantidad']})")
-    return alertas
-
-def obtener_estrella():
-    hoy = datetime.now().date()
-    query = "SELECT producto, SUM(cantidad) as total FROM ventas WHERE date(fecha) = ? GROUP BY producto ORDER BY total DESC LIMIT 1"
-    df = run_query(query, (hoy,), return_data=True)
-    if not df.empty:
-        return df.iloc[0]['producto'], df.iloc[0]['total']
-    return None, 0
+    return mensajes
 
 # --- PDF ---
 class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 14)
-        self.cell(0, 10, 'Reporte de Caja - Heladería', 0, 1, 'C')
+        self.cell(0, 10, 'Reporte Heladería', 0, 1, 'C')
         self.ln(5)
 
 def generar_pdf(df_ventas, total_dia, fecha):
@@ -139,252 +103,271 @@ def generar_pdf(df_ventas, total_dia, fecha):
     pdf.set_font("Arial", size=10)
     pdf.cell(0, 10, txt=f"Fecha: {fecha}", ln=1)
     
-    # Encabezado Tabla
     pdf.set_fill_color(220, 220, 220)
     pdf.cell(80, 8, "Producto", 1, 0, 'C', 1)
     pdf.cell(20, 8, "Cant.", 1, 0, 'C', 1)
-    pdf.cell(25, 8, "Extra ($)", 1, 0, 'C', 1)
     pdf.cell(30, 8, "Total ($)", 1, 0, 'C', 1)
-    pdf.cell(35, 8, "Pago", 1, 1, 'C', 1)
+    pdf.ln()
     
     for _, row in df_ventas.iterrows():
-        nombre = str(row['producto'])[:35]
-        pdf.cell(80, 8, nombre, 1)
+        pdf.cell(80, 8, str(row['producto_nombre'])[:35], 1)
         pdf.cell(20, 8, str(row['cantidad']), 1, 0, 'C')
-        pdf.cell(25, 8, f"{row['extras']:.2f}", 1, 0, 'C')
         pdf.cell(30, 8, f"{row['total']:.2f}", 1, 0, 'C')
-        pdf.cell(35, 8, row['metodo_pago'], 1, 1, 'C')
+        pdf.ln()
         
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, f"TOTAL VENDIDO: S/ {total_dia:,.2f}", 0, 1, 'R')
+    pdf.cell(0, 10, f"TOTAL: S/ {total_dia:,.2f}", 0, 1, 'R')
     return pdf.output(dest='S').encode('latin-1')
 
-# --- MAIN ---
+# --- MAIN APP ---
 def main():
     init_db()
-    if 'msg_inv' not in st.session_state: st.session_state.msg_inv = []
-    
-    st.sidebar.title("🍦 Heladería Pro")
-    menu = st.sidebar.radio("Navegación", ["🛒 Caja & Ventas", "📝 Productos (Menú)", "📦 Insumos (Inventario)", "📊 Cierre de Día"])
+    if 'logs' not in st.session_state: st.session_state.logs = []
 
-    # ------------------------------------------------------------------
-    # 1. CAJA Y VENTAS (PANTALLA PRINCIPAL)
-    # ------------------------------------------------------------------
-    if menu == "🛒 Caja & Ventas":
+    st.sidebar.title("🍦 CRUD System")
+    opcion = st.sidebar.radio("Ir a:", ["🛒 Vender (Caja)", "📝 Productos (CRUD)", "📦 Insumos (CRUD)", "📊 Reportes & Eliminar"])
+
+    # -----------------------------------------------------------
+    # 1. CAJA Y VENTAS
+    # -----------------------------------------------------------
+    if opcion == "🛒 Vender (Caja)":
         st.header("Punto de Venta")
-
-        # --- ALERTAS Y NOTIFICACIONES ---
-        col_warn, col_star = st.columns([2, 1])
-        alertas = obtener_alertas()
         
-        with col_warn:
-            if alertas:
-                html_alertas = "<br>".join(alertas)
-                st.markdown(f"<div class='alerta-box'>⚠️ ALERTA DE STOCK:<br>{html_alertas}</div>", unsafe_allow_html=True)
-            else:
-                st.info("✅ Inventario estable")
-        
-        prod_star, cant_star = obtener_estrella()
-        with col_star:
-            if prod_star:
-                st.markdown(f"<div class='estrella-box'>🏆 <b>Más Vendido:</b><br>{prod_star}<br>({cant_star} un.)</div>", unsafe_allow_html=True)
+        # Mostrar logs de transacciones anteriores
+        if st.session_state.logs:
+            for log in st.session_state.logs:
+                st.info(log)
+            st.session_state.logs = [] # Limpiar
 
-        # Mostrar mensajes de descuento de inventario (Feedback)
-        if st.session_state.msg_inv:
-            for m in st.session_state.msg_inv:
-                st.toast(m, icon="📉")
-            st.session_state.msg_inv = [] # Limpiar mensajes
-
-        st.divider()
-
-        # --- FORMULARIO DE VENTA ---
+        # Cargar productos
         df_menu = run_query("SELECT * FROM menu ORDER BY nombre", return_data=True)
         
         if not df_menu.empty:
             c1, c2 = st.columns([3, 1])
-            opciones = [f"{row['nombre']} - S/{row['precio']}" for i, row in df_menu.iterrows()]
-            seleccion = c1.selectbox("¿Qué lleva el cliente?", opciones)
-            cantidad = c2.number_input("Cantidad", 1, 50, 1)
+            lista_nombres = [f"{row['nombre']} | S/{row['precio']}" for i, row in df_menu.iterrows()]
+            eleccion = c1.selectbox("Producto", lista_nombres)
+            cantidad = c2.number_input("Cantidad", 1, 100, 1)
             
-            # Datos base
-            nombre_prod = seleccion.split(" - S/")[0]
-            precio_base = float(seleccion.split(" - S/")[1])
+            # Parsing
+            nombre_real = eleccion.split(" | S/")[0]
+            precio_real = float(eleccion.split(" | S/")[1])
             
             # Extras
-            st.markdown("###### Adicionales (+ S/ 1.00)")
             col_x1, col_x2 = st.columns(2)
-            add_top = col_x1.checkbox("🍬 Topping")
-            add_con = col_x2.checkbox("🍦 Cono Extra")
+            add_top = col_x1.checkbox("Topping (+ S/1)")
+            add_con = col_x2.checkbox("Cono Extra (+ S/1)")
             
-            extras_total = (1 if add_top else 0) * cantidad + (1 if add_con else 0) * cantidad
-            total_final = (precio_base * cantidad) + extras_total
+            total_extra = (cantidad if add_top else 0) + (cantidad if add_con else 0)
+            total_final = (precio_real * cantidad) + total_extra
             
-            st.markdown(f"### 💰 Total a Cobrar: S/ {total_final:.2f}")
-            metodo = st.radio("Pago:", ["Efectivo", "Yape/Plin", "Tarjeta"], horizontal=True)
+            st.markdown(f"### 💰 Total: S/ {total_final:.2f}")
+            metodo = st.radio("Pago", ["Efectivo", "Yape", "Tarjeta"], horizontal=True)
             
-            if st.button("✅ COBRAR", type="primary", use_container_width=True):
-                # 1. Registrar venta
-                run_query("INSERT INTO ventas (producto, precio_base, cantidad, extras, total, metodo_pago, fecha) VALUES (?,?,?,?,?,?,?)",
-                          (nombre_prod, precio_base, cantidad, extras_total, total_final, metodo, datetime.now()))
+            if st.button("✅ REGISTRAR VENTA", type="primary", use_container_width=True):
+                # 1. Guardar Venta
+                run_query("INSERT INTO ventas (producto_nombre, precio_base, cantidad, extras, total, metodo_pago, fecha) VALUES (?,?,?,?,?,?,?)",
+                          (nombre_real, precio_real, cantidad, total_extra, total_final, metodo, datetime.now()))
                 
-                # 2. Descontar y guardar mensajes de confirmación
-                msgs = procesar_venta_inventario(nombre_prod, cantidad, add_con, add_top)
-                st.session_state.msg_inv = msgs # Guardar para mostrar al recargar
+                # 2. Descontar Inventario
+                logs = procesar_descuento_stock(nombre_real, cantidad, add_con, add_top)
                 
+                st.session_state.logs = logs
+                st.session_state.logs.append(f"✅ Venta de {nombre_real} guardada.")
                 st.rerun()
+                
         else:
-            st.warning("Ve a 'Productos' para configurar tu menú.")
+            st.warning("No hay productos. Ve a 'Productos (CRUD)' para crear uno.")
 
-    # ------------------------------------------------------------------
-    # 2. PRODUCTOS (VINCULACIÓN INMEDIATA) - AQUÍ ESTÁ EL CAMBIO IMPORTANTE
-    # ------------------------------------------------------------------
-    elif menu == "📝 Productos (Menú)":
-        st.header("Gestión de Productos")
+    # -----------------------------------------------------------
+    # 2. PRODUCTOS (CRUD COMPLETO)
+    # -----------------------------------------------------------
+    elif opcion == "📝 Productos (CRUD)":
+        st.header("Gestión de Productos (Menú)")
         
-        # Primero revisamos si hay insumos
-        df_insu = run_query("SELECT * FROM insumos ORDER BY nombre", return_data=True)
-        lista_insumos = df_insu['nombre'].unique() if not df_insu.empty else []
-        
-        st.subheader("Crear Nuevo Producto")
-        st.markdown("Define el producto y **automáticamente** vincúlalo a un insumo (Ej: Cono Chocolate -> Gasta 1 Barquillo).")
-        
-        with st.form("nuevo_producto_form", clear_on_submit=True):
-            c1, c2, c3 = st.columns(3)
-            nom = c1.text_input("Nombre (ej. Cono Doble)")
-            pre = c2.number_input("Precio Venta (S/)", min_value=0.0)
-            cat = c3.selectbox("Categoría", ["Helado", "Paleta", "Bebida", "Postre", "Otro/Consumible"])
-            
-            st.divider()
-            st.markdown("🔻 **Vinculación con Inventario (Obligatorio para control)**")
-            
-            col_i1, col_i2 = st.columns(2)
-            if len(lista_insumos) > 0:
-                insumo_elegido = col_i1.selectbox("¿Qué insumo principal gasta?", lista_insumos)
-                cant_gasto = col_i2.number_input(f"¿Cuánta cantidad de '{insumo_elegido}' usa?", value=1.0)
-                sin_stock = False
-            else:
-                st.error("⚠️ No hay insumos registrados. Ve a 'Insumos' primero.")
-                sin_stock = True
-            
-            btn_guardar = st.form_submit_button("Guardar Producto y Vincular")
-            
-            if btn_guardar and nom and not sin_stock:
-                # 1. Crear Producto
-                prod_id = run_query("INSERT INTO menu (nombre, precio, categoria) VALUES (?, ?, ?)", (nom, pre, cat))
+        # --- A. CREAR PRODUCTO ---
+        with st.expander("➕ Crear Nuevo Producto", expanded=True):
+            with st.form("new_prod", clear_on_submit=True):
+                c1, c2, c3 = st.columns(3)
+                nom = c1.text_input("Nombre (ej. Vaso 2 Bolas)")
+                pre = c2.number_input("Precio", min_value=0.0)
+                cat = c3.selectbox("Categoría", ["Helado", "Paleta", "Bebida", "Otro/Consumible"])
                 
-                # 2. Crear Vinculo (Receta) INMEDIATAMENTE
-                # Buscar ID del insumo seleccionado
-                id_insumo = df_insu[df_insu['nombre'] == insumo_elegido]['id'].values[0]
-                run_query("INSERT INTO recetas (menu_id, insumo_id, cantidad_insumo) VALUES (?, ?, ?)", (prod_id, id_insumo, cant_gasto))
+                # OPCIÓN DE VINCULACIÓN
+                st.markdown("---")
+                st.write("⚙️ **Configuración de Inventario**")
+                vincular = st.checkbox("¿Este producto descuenta insumos del inventario?", value=True)
                 
-                st.success(f"✅ Producto '{nom}' creado y vinculado a '{insumo_elegido}'.")
-                st.rerun()
+                insumo_id = None
+                cant_gasto = 0
+                
+                if vincular:
+                    df_ins = run_query("SELECT * FROM insumos", return_data=True)
+                    if not df_ins.empty:
+                        # Crear diccionario para mapear nombre -> id
+                        mapa_insumos = {row['nombre']: row['id'] for i, row in df_ins.iterrows()}
+                        insumo_sel = st.selectbox("Selecciona qué insumo gasta:", list(mapa_insumos.keys()))
+                        insumo_id = mapa_insumos[insumo_sel]
+                        cant_gasto = st.number_input("Cantidad que gasta por venta:", value=1.0)
+                    else:
+                        st.error("No hay insumos creados. Ve a Insumos primero.")
+                
+                if st.form_submit_button("Guardar Producto"):
+                    # 1. Guardar Producto
+                    pid = run_query("INSERT INTO menu (nombre, precio, categoria) VALUES (?,?,?)", (nom, pre, cat))
+                    
+                    # 2. Guardar Receta (Solo si marcó vincular)
+                    if vincular and insumo_id:
+                        run_query("INSERT INTO recetas (menu_id, insumo_id, cantidad_insumo) VALUES (?,?,?)", (pid, insumo_id, cant_gasto))
+                        st.success(f"Producto '{nom}' creado y vinculado.")
+                    else:
+                        st.success(f"Producto '{nom}' creado (Sin vínculo a inventario).")
+                    st.rerun()
 
+        # --- B. VER Y ELIMINAR PRODUCTOS ---
         st.divider()
-        st.subheader("Lista de Productos y sus Recetas")
-        recetas = run_query("""
-            SELECT m.nombre as Producto, m.precio as Precio, m.categoria, i.nombre as Gasta_Insumo, r.cantidad_insumo as Cantidad
+        st.subheader("Lista de Productos")
+        
+        df_prods = run_query("""
+            SELECT m.id, m.nombre, m.precio, m.categoria, i.nombre as Gasta_Insumo, r.cantidad_insumo as Cantidad_Gasto
             FROM menu m
             LEFT JOIN recetas r ON m.id = r.menu_id
             LEFT JOIN insumos i ON r.insumo_id = i.id
         """, return_data=True)
-        st.dataframe(recetas, use_container_width=True)
-
-    # ------------------------------------------------------------------
-    # 3. INSUMOS (INVENTARIO)
-    # ------------------------------------------------------------------
-    elif menu == "📦 Insumos (Inventario)":
-        st.header("Almacén e Insumos")
         
-        with st.expander("➕ Registrar Nuevo Insumo (Lo que compras)"):
-            with st.form("form_insumo", clear_on_submit=True):
-                c1, c2, c3, c4 = st.columns(4)
-                i_nom = c1.text_input("Nombre (ej. Cono Waffle)")
-                i_cant = c2.number_input("Stock Actual", min_value=0.0)
-                i_uni = c3.text_input("Unidad (Caja, Pza)")
-                i_min = c4.number_input("Mínimo (Alerta)", value=10.0)
+        if not df_prods.empty:
+            for i, row in df_prods.iterrows():
+                col1, col2, col3, col4, col5 = st.columns([1, 3, 2, 3, 1])
+                col1.write(f"ID: {row['id']}")
+                col2.write(f"**{row['nombre']}**")
+                col3.write(f"S/ {row['precio']}")
                 
-                if st.form_submit_button("Guardar Insumo"):
-                    run_query("INSERT INTO insumos (nombre, cantidad, unidad, minimo) VALUES (?,?,?,?)", (i_nom, i_cant, i_uni, i_min))
-                    st.success("Insumo guardado.")
+                receta_txt = f"Gasta: {row['Cantidad_Gasto']} de {row['Gasta_Insumo']}" if row['Gasta_Insumo'] else "No vinculado"
+                col4.caption(receta_txt)
+                
+                if col5.button("🗑️", key=f"del_prod_{row['id']}"):
+                    run_query("DELETE FROM menu WHERE id = ?", (row['id'],))
+                    run_query("DELETE FROM recetas WHERE menu_id = ?", (row['id'],))
+                    st.rerun()
+                st.markdown("<hr style='margin: 5px 0'>", unsafe_allow_html=True)
+
+    # -----------------------------------------------------------
+    # 3. INSUMOS (CRUD CON EDICIÓN DIRECTA)
+    # -----------------------------------------------------------
+    elif opcion == "📦 Insumos (CRUD)":
+        st.header("Gestión de Inventario")
+        
+        # A. AGREGAR
+        with st.expander("➕ Nuevo Insumo"):
+            with st.form("add_ins", clear_on_submit=True):
+                c1, c2, c3, c4 = st.columns(4)
+                n = c1.text_input("Nombre")
+                q = c2.number_input("Cantidad", 0.0)
+                u = c3.text_input("Unidad")
+                m = c4.number_input("Mínimo Alerta", 5.0)
+                if st.form_submit_button("Guardar"):
+                    run_query("INSERT INTO insumos (nombre, cantidad, unidad, minimo) VALUES (?,?,?,?)", (n, q, u, m))
                     st.rerun()
         
-        st.subheader("Inventario en Tiempo Real")
-        df_inv = run_query("SELECT * FROM insumos ORDER BY cantidad ASC", return_data=True)
+        # B. TABLA EDITABLE (CRUD PODEROSO)
+        st.subheader("Inventario (Edita directamente en la tabla)")
+        st.info("💡 Haz doble clic en una celda para editar el stock o el nombre. Se guarda automático.")
         
-        if not df_inv.empty:
-            for _, row in df_inv.iterrows():
-                # Colores semáforo
-                bg = "white"
-                borde = "green"
-                txt_estado = "OK"
-                
-                if row['cantidad'] <= (row['minimo']/2):
-                    bg = "#ffe6e6"
-                    borde = "red"
-                    txt_estado = "CRÍTICO"
-                elif row['cantidad'] <= row['minimo']:
-                    bg = "#fffbe6"
-                    borde = "orange"
-                    txt_estado = "BAJO"
-                
-                col_card, col_edit = st.columns([4, 1])
-                with col_card:
-                    st.markdown(f"""
-                    <div style="background-color:{bg}; padding:10px; border-radius:5px; border-left: 5px solid {borde}; margin-bottom:5px;">
-                        <b>{row['nombre']}</b> ({row['unidad']}) <br>
-                        Stock: <span style="font-size:1.2em; font-weight:bold">{row['cantidad']}</span> 
-                        <span style="float:right; color:{borde}; font-weight:bold">{txt_estado}</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-                with col_edit:
-                    with st.popover("📝"):
-                        nuevo_stock = st.number_input(f"Stock Real", value=float(row['cantidad']), key=f"inv_{row['id']}")
-                        if st.button("Guardar", key=f"btn_{row['id']}"):
-                            run_query("UPDATE insumos SET cantidad = ? WHERE id = ?", (nuevo_stock, row['id']))
-                            st.rerun()
-        else:
-            st.info("No hay insumos registrados.")
+        df_ins = run_query("SELECT * FROM insumos ORDER BY id", return_data=True)
+        
+        # Usamos st.data_editor para permitir cambios masivos y rápidos
+        edited_df = st.data_editor(
+            df_ins,
+            column_config={
+                "id": st.column_config.NumberColumn(disabled=True),
+                "cantidad": st.column_config.NumberColumn("Stock Actual (Editar aquí)", min_value=0, format="%.1f"),
+                "minimo": st.column_config.NumberColumn("Alerta Mínima", min_value=0),
+            },
+            hide_index=True,
+            use_container_width=True,
+            key="editor_insumos"
+        )
+        
+        # DETECTAR CAMBIOS Y GUARDAR
+        # Comparamos el dataframe original con el editado
+        if not df_ins.equals(edited_df):
+            # Iteramos para encontrar diferencias y actualizar BD
+            # Esta es una forma simplificada de guardar cambios del data_editor
+            for index, row in edited_df.iterrows():
+                id_insumo = row['id']
+                # Actualizamos todo por seguridad
+                run_query("UPDATE insumos SET nombre=?, cantidad=?, unidad=?, minimo=? WHERE id=?", 
+                          (row['nombre'], row['cantidad'], row['unidad'], row['minimo'], id_insumo))
+            st.toast("✅ Inventario actualizado correctamente.")
+            
+        # BOTONES DE ELIMINAR (Fuera de la tabla editable)
+        st.markdown("##### Eliminar Insumos")
+        with st.expander("Ver opciones de borrado"):
+            for i, row in df_ins.iterrows():
+                c1, c2 = st.columns([4, 1])
+                c1.text(f"{row['nombre']} ({row['cantidad']})")
+                if c2.button("Borrar", key=f"del_ins_{row['id']}"):
+                    run_query("DELETE FROM insumos WHERE id=?", (row['id'],))
+                    st.rerun()
 
-    # ------------------------------------------------------------------
-    # 4. CIERRE Y REPORTES
-    # ------------------------------------------------------------------
-    elif menu == "📊 Cierre de Día":
-        st.header("Cierre de Caja")
+    # -----------------------------------------------------------
+    # 4. REPORTES Y ELIMINAR VENTAS
+    # -----------------------------------------------------------
+    elif opcion == "📊 Reportes & Eliminar":
+        st.header("Reporte de Ventas")
         hoy = datetime.now().date()
         
-        df_ventas = run_query("SELECT * FROM ventas", return_data=True)
+        df_ventas = run_query("SELECT * FROM ventas ORDER BY id DESC", return_data=True)
         
         if not df_ventas.empty:
             df_ventas['fecha'] = pd.to_datetime(df_ventas['fecha'])
             ventas_hoy = df_ventas[df_ventas['fecha'].dt.date == hoy]
             
-            total = ventas_hoy['total'].sum()
-            extras = ventas_hoy['extras'].sum()
+            # Métricas
+            t = ventas_hoy['total'].sum()
+            col1, col2 = st.columns(2)
+            col1.metric("Total Hoy", f"S/ {t:,.2f}")
+            col2.metric("Ventas Hoy", len(ventas_hoy))
             
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Ventas Totales", f"S/ {total:,.2f}")
-            c2.metric("Extras Cobrados", f"S/ {extras:,.2f}")
-            c3.metric("Transacciones", len(ventas_hoy))
+            st.divider()
+            st.subheader("Historial de Hoy (Opción de Borrar)")
             
-            st.dataframe(ventas_hoy[['fecha', 'producto', 'cantidad', 'extras', 'total', 'metodo_pago']], use_container_width=True)
+            # Tabla manual para poner botón de borrar
+            # Header
+            c1, c2, c3, c4, c5 = st.columns([1, 3, 1, 2, 1])
+            c1.write("**Hora**")
+            c2.write("**Producto**")
+            c3.write("**Cant**")
+            c4.write("**Total**")
+            c5.write("**Acción**")
             
-            col_pdf, col_excel = st.columns(2)
+            for i, row in ventas_hoy.iterrows():
+                c1, c2, c3, c4, c5 = st.columns([1, 3, 1, 2, 1])
+                c1.write(row['fecha'].strftime("%H:%M"))
+                c2.write(row['producto_nombre'])
+                c3.write(str(row['cantidad']))
+                c4.write(f"S/ {row['total']:.2f}")
+                
+                if c5.button("❌", key=f"del_venta_{row['id']}"):
+                    # Al borrar venta, ¿Regresamos el stock? 
+                    # Generalmente NO en restaurantes porque el helado ya se sirvió (merma),
+                    # pero si fue error de dedo, sí.
+                    # Por simplicidad, aquí solo borramos el registro de dinero.
+                    run_query("DELETE FROM ventas WHERE id=?", (row['id'],))
+                    st.success("Venta eliminada del reporte.")
+                    st.rerun()
             
+            st.divider()
+            
+            # Descargas
             try:
-                pdf_bytes = generar_pdf(ventas_hoy, total, str(hoy))
-                col_pdf.download_button("📄 Descargar Reporte PDF", pdf_bytes, f"Cierre_{hoy}.pdf", "application/pdf")
-            except Exception as e:
-                col_pdf.error("Error PDF. Revisa librería fpdf.")
-            
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer) as writer:
-                ventas_hoy.to_excel(writer, index=False)
-            col_excel.download_button("📊 Descargar Excel", buffer.getvalue(), f"Ventas_{hoy}.xlsx")
-            
+                pdf = generar_pdf(ventas_hoy, t, str(hoy))
+                st.download_button("📄 PDF Reporte", pdf, f"Reporte_{hoy}.pdf")
+            except:
+                pass
+                
         else:
-            st.info("Aún no hay ventas registradas.")
+            st.info("No hay ventas.")
 
 if __name__ == '__main__':
     main()
