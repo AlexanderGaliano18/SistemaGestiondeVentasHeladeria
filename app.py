@@ -8,29 +8,48 @@ from fpdf import FPDF
 # --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Sistema Heladería Master", layout="wide", page_icon="🍦")
 
-# --- ESTILOS ---
+# --- ESTILOS ADAPTABLES (MODO OSCURO / CLARO) ---
 st.markdown("""
 <style>
-    .stMetric { border: 1px solid #ddd; padding: 10px; border-radius: 5px; background-color: #f9f9f9; }
-    .merma-box { background-color: #fff5f5; border-left: 5px solid #ff4b4b; padding: 15px; border-radius: 5px; color: #8a1f1f; }
-    .compra-box { background-color: #f0fff4; border-left: 5px solid #28a745; padding: 15px; border-radius: 5px; color: #155724; }
-    .total-display { font-size: 26px; font-weight: bold; color: #1565c0; text-align: right; padding: 10px; }
-    /* Ajuste para tabs */
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-    .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: #f0f2f6; border-radius: 4px 4px 0 0; gap: 1px; padding-top: 10px; padding-bottom: 10px; }
-    .stTabs [aria-selected="true"] { background-color: #ffffff; border-bottom: 2px solid #1565c0; }
+    /* Métricas: Fondo semitransparente que se adapta al tema */
+    div[data-testid="stMetric"], .stMetric {
+        background-color: rgba(128, 128, 128, 0.1); /* Gris transparente */
+        border: 1px solid rgba(128, 128, 128, 0.2);
+        padding: 10px;
+        border-radius: 5px;
+    }
+
+    /* Cajas de Alerta (Merma/Compra): Usamos transparencia (RGBA) */
+    .merma-box {
+        background-color: rgba(255, 75, 75, 0.1); /* Rojo transparente */
+        border-left: 5px solid #ff4b4b;
+        padding: 15px;
+        border-radius: 5px;
+    }
+    
+    .compra-box {
+        background-color: rgba(40, 167, 69, 0.1); /* Verde transparente */
+        border-left: 5px solid #28a745;
+        padding: 15px;
+        border-radius: 5px;
+    }
+
+    /* Total Display: Sin color fijo para que el texto sea legible siempre */
+    .total-display {
+        font-size: 26px;
+        font-weight: bold;
+        text-align: right; 
+        padding: 10px;
+        border-top: 1px solid rgba(128, 128, 128, 0.2);
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # --- BASE DE DATOS ---
 def init_db():
-    conn = sqlite3.connect('heladeria_final_v4.db')
+    conn = sqlite3.connect('heladeria_final_v5.db')
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS menu (id INTEGER PRIMARY KEY, nombre TEXT, precio REAL, categoria TEXT)''')
-    # Agregamos columna 'es_decimal' para saber si usa decimales (1) o enteros (0)
-    # Si la tabla ya existe, esto podría dar error en un entorno real sin migración, 
-    # pero como es SQLite local, el script manejará la estructura básica. 
-    # Para asegurar compatibilidad sin borrar tu db, asumiremos la logica en el código.
     c.execute('''CREATE TABLE IF NOT EXISTS insumos (id INTEGER PRIMARY KEY, nombre TEXT, cantidad REAL, unidad TEXT, minimo REAL DEFAULT 10)''')
     c.execute('''CREATE TABLE IF NOT EXISTS recetas (id INTEGER PRIMARY KEY, menu_id INTEGER, insumo_id INTEGER, cantidad_insumo REAL)''')
     c.execute('''CREATE TABLE IF NOT EXISTS ventas (id INTEGER PRIMARY KEY, producto_nombre TEXT, precio_base REAL, cantidad INTEGER, extras REAL, total REAL, metodo_pago TEXT, fecha TIMESTAMP)''')
@@ -40,7 +59,7 @@ def init_db():
     conn.close()
 
 def run_query(query, params=(), return_data=False):
-    conn = sqlite3.connect('heladeria_final_v4.db')
+    conn = sqlite3.connect('heladeria_final_v5.db')
     c = conn.cursor()
     try:
         c.execute(query, params)
@@ -56,7 +75,6 @@ def run_query(query, params=(), return_data=False):
             return last_id
     except Exception as e:
         conn.close()
-        # st.error(f"Error BD: {e}") # Comentado para no ensuciar la UI
         return None
 
 # --- LOG MOVIMIENTOS ---
@@ -67,7 +85,7 @@ def log_movimiento(insumo, cantidad, tipo, razon):
 # --- PROCESAR VENTA ---
 def procesar_descuento_stock(producto_nombre, cantidad_vendida, cant_conos_extra, cant_toppings):
     mensajes = []
-    conn = sqlite3.connect('heladeria_final_v4.db')
+    conn = sqlite3.connect('heladeria_final_v5.db')
     c = conn.cursor()
     
     # 1. Receta Base
@@ -152,7 +170,7 @@ def main():
 
     st.sidebar.title("🍦 Heladería Manager")
     
-    # MENÚ UNIFICADO (Como pediste)
+    # MENÚ UNIFICADO
     opcion = st.sidebar.radio("Navegación", [
         "🛒 Caja (Vender)", 
         "📦 Inventario (Stock/Entradas)", 
@@ -227,7 +245,6 @@ def main():
     elif opcion == "📦 Inventario (Stock/Entradas)":
         st.header("Gestión de Inventario")
         
-        # Pestañas para organizar todo en un solo lugar
         tab_stock, tab_entrada, tab_kardex = st.tabs(["📦 Ver Stock", "➕ Registrar Compra/Entrada", "📜 Historial Movimientos"])
         
         # TAB 1: VER STOCK (EDITABLE)
@@ -257,14 +274,12 @@ def main():
                         c1, c2 = st.columns([2, 1])
                         ins_sel = c1.selectbox("Insumo", df_ex['nombre'].unique())
                         
-                        # Selector de tipo de entrada para validación
                         tipo_dato = c2.radio("Unidad de Medida:", ["Unidades (Enteros)", "Litros/Kilos (Decimales)"], horizontal=True)
-                        
-                        # Lógica de input
                         step_val = 1.0 if "Unidades" in tipo_dato else 0.1
                         fmt_val = "%d" if "Unidades" in tipo_dato else "%.2f"
+                        min_val = 1.0 if "Unidades" in tipo_dato else 0.1
                         
-                        cant_add = st.number_input("Cantidad que llegó:", min_value=0.1, step=step_val, format=fmt_val)
+                        cant_add = st.number_input("Cantidad que llegó:", min_value=min_val, step=step_val, format=fmt_val)
                         nota = st.text_input("Nota (opcional)")
                         
                         if st.form_submit_button("➕ Sumar Stock"):
@@ -281,13 +296,12 @@ def main():
                     uni = c2.text_input("Unidad (ej. Cajas, Litros)")
                     
                     c3, c4 = st.columns(2)
-                    
-                    # Selector inteligente
                     tipo_dato_new = st.radio("Tipo de conteo:", ["Unidades (Enteros)", "Litros/Kilos (Decimales)"], horizontal=True)
                     step_val_new = 1.0 if "Unidades" in tipo_dato_new else 0.1
                     fmt_val_new = "%d" if "Unidades" in tipo_dato_new else "%.2f"
+                    min_val_new = 1.0 if "Unidades" in tipo_dato_new else 0.0
                     
-                    cant = c3.number_input("Cantidad Inicial", min_value=0.0, step=step_val_new, format=fmt_val_new)
+                    cant = c3.number_input("Cantidad Inicial", min_value=min_val_new, step=step_val_new, format=fmt_val_new)
                     min_al = c4.number_input("Alerta Mínimo", 5.0)
                     
                     if st.form_submit_button("Guardar Insumo"):
@@ -306,7 +320,7 @@ def main():
                 st.info("Sin movimientos")
 
     # -----------------------------------------------------------
-    # 3. MERMAS
+    # 3. MERMAS (CORREGIDO PARA UNIDADES Y CSS ADAPTABLE)
     # -----------------------------------------------------------
     elif opcion == "📉 Mermas (Desperdicios)":
         st.header("Registro de Mermas")
@@ -318,12 +332,20 @@ def main():
                 c1, c2 = st.columns([2, 1])
                 ins = c1.selectbox("Insumo", df_ins['nombre'].unique())
                 
-                # Selector de tipo también aquí
                 tipo_dato_m = st.radio("Medida:", ["Unidades (Enteros)", "Decimales"], horizontal=True)
-                step_m = 1.0 if "Unidades" in tipo_dato_m else 0.1
-                fmt_m = "%d" if "Unidades" in tipo_dato_m else "%.2f"
                 
-                cant = c2.number_input("Cantidad Perdida", min_value=0.1, step=step_m, format=fmt_m)
+                if "Unidades" in tipo_dato_m:
+                    step_m = 1
+                    min_m = 1
+                    fmt_m = "%d"
+                    val_def = 1
+                else:
+                    step_m = 0.1
+                    min_m = 0.1
+                    fmt_m = "%.2f"
+                    val_def = 0.1
+                
+                cant = c2.number_input("Cantidad Perdida", min_value=min_m, step=step_m, format=fmt_m, value=val_def)
                 razon = st.text_input("Razón")
                 
                 if st.form_submit_button("Registrar Salida"):
@@ -358,10 +380,7 @@ def main():
                         mapa = {r['nombre']: r['id'] for i, r in df_ins.iterrows()}
                         sel = st.selectbox("Gasta:", list(mapa.keys()))
                         ins_id = mapa[sel]
-                        
-                        # Selector para gasto también (por si acaso)
                         q_gasto = st.number_input("Cantidad a descontar:", step=0.1) 
-                        # Aquí dejamos step 0.1 general porque una receta puede usar 0.5 unidades de algo
                 
                 if st.form_submit_button("Guardar"):
                     pid = run_query("INSERT INTO menu (nombre, precio, categoria) VALUES (?,?,?)", (n, p, cat))
