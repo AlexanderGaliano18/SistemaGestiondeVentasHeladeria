@@ -16,11 +16,21 @@ def get_hora_peru():
 # --- ESTILOS ---
 st.markdown("""
 <style>
+    /* Métricas: Fondo semitransparente adaptable */
     .stMetric { background-color: rgba(128, 128, 128, 0.1); border: 1px solid rgba(128, 128, 128, 0.2); padding: 10px; border-radius: 5px; }
+    
+    /* Cajas de colores con transparencia */
     .merma-box { background-color: rgba(255, 75, 75, 0.1); border-left: 5px solid #ff4b4b; padding: 15px; border-radius: 5px; }
     .compra-box { background-color: rgba(40, 167, 69, 0.1); border-left: 5px solid #28a745; padding: 15px; border-radius: 5px; }
     .cierre-box { background-color: rgba(255, 193, 7, 0.1); border-left: 5px solid #ffc107; padding: 15px; border-radius: 5px; }
+    
+    /* Total Display */
     .total-display { font-size: 26px; font-weight: bold; text-align: right; padding: 10px; border-top: 1px solid rgba(128, 128, 128, 0.2); }
+    
+    /* Tabs transparentes */
+    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
+    .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: rgba(128, 128, 128, 0.1); border-radius: 4px 4px 0 0; gap: 1px; padding-top: 10px; padding-bottom: 10px; }
+    .stTabs [aria-selected="true"] { background-color: rgba(128, 128, 128, 0.05); border-bottom: 2px solid #1565c0; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -61,7 +71,6 @@ def run_query(query, params=(), return_data=False):
 def get_ultimo_cierre():
     df = run_query("SELECT fecha_cierre FROM cierres ORDER BY id DESC LIMIT 1", return_data=True)
     if not df.empty:
-        # Convertimos la fecha guardada (string) a objeto datetime con zona horaria
         return pd.to_datetime(df.iloc[0]['fecha_cierre']).tz_convert('America/Lima')
     return None
 
@@ -178,12 +187,12 @@ def main():
     ])
 
     # -----------------------------------------------------------
-    # 1. CAJA (VENDER) - Muestra lo vendido DESDE el último cierre
+    # 1. CAJA (VENDER)
     # -----------------------------------------------------------
     if opcion == "🛒 Caja (Vender)":
         st.header("Punto de Venta")
         
-        # --- CALCULO VENTAS ACTUALES (Desde el último cierre) ---
+        # --- CALCULO VENTAS ACTUALES ---
         ultimo_cierre = get_ultimo_cierre()
         df_todas = run_query("SELECT * FROM ventas", return_data=True)
         total_turno_actual = 0.0
@@ -191,7 +200,6 @@ def main():
         if not df_todas.empty:
             df_todas['fecha'] = pd.to_datetime(df_todas['fecha']).dt.tz_convert('America/Lima')
             if ultimo_cierre:
-                # Filtrar solo ventas POSTERIORES al último cierre
                 df_turno = df_todas[df_todas['fecha'] > ultimo_cierre]
             else:
                 df_turno = df_todas
@@ -256,14 +264,13 @@ def main():
                 st.rerun()
 
     # -----------------------------------------------------------
-    # 2. CIERRE DE CAJA (CORTE)
+    # 2. CIERRE DE CAJA
     # -----------------------------------------------------------
     elif opcion == "🔒 Cierre de Caja (Corte)":
         st.header("Cierre de Caja / Corte")
-        st.markdown("""<div class="cierre-box">⚠️ Al cerrar caja, el contador <b>se reinicia a 0</b> para el siguiente periodo (o día siguiente).</div>""", unsafe_allow_html=True)
+        st.markdown("""<div class="cierre-box">⚠️ Al cerrar caja, el contador <b>se reinicia a 0</b>.</div>""", unsafe_allow_html=True)
         st.divider()
         
-        # Calcular ventas pendientes de cierre
         ultimo_cierre = get_ultimo_cierre()
         df_todas = run_query("SELECT * FROM ventas", return_data=True)
         df_turno = pd.DataFrame()
@@ -307,7 +314,7 @@ def main():
                     st.warning("Escribe nombre responsable.")
         
         if not df_turno.empty:
-            with st.expander("Ver detalle de ventas pendientes de cierre"):
+            with st.expander("Ver detalle"):
                 st.dataframe(df_turno)
 
     # -----------------------------------------------------------
@@ -339,9 +346,8 @@ def main():
                         t_dato = c2.radio("Medida", ["Unidades", "Decimales"], horizontal=True)
                         step = 1.0 if "Unidades" in t_dato else 0.1
                         fmt = "%d" if "Unidades" in t_dato else "%.2f"
-                        min_val = 1.0 if "Unidades" in t_dato else 0.1
                         
-                        cant = st.number_input("Cantidad", step=step, format=fmt, min_value=min_val)
+                        cant = st.number_input("Cantidad", step=step, format=fmt, min_value=0.1)
                         nota = st.text_input("Nota")
                         if st.form_submit_button("Sumar"):
                             run_query("UPDATE insumos SET cantidad=cantidad+? WHERE nombre=?", (cant, ins))
@@ -357,9 +363,8 @@ def main():
                     t_dato = st.radio("Medida", ["Unidades", "Decimales"], horizontal=True)
                     step = 1.0 if "Unidades" in t_dato else 0.1
                     fmt = "%d" if "Unidades" in t_dato else "%.2f"
-                    min_val = 1.0 if "Unidades" in t_dato else 0.0
                     
-                    q = c3.number_input("Cant", step=step, format=fmt, min_value=min_val)
+                    q = c3.number_input("Cant", step=step, format=fmt)
                     m = c4.number_input("Min", 5.0)
                     if st.form_submit_button("Crear"):
                         run_query("INSERT INTO insumos (nombre, cantidad, unidad, minimo) VALUES (?,?,?,?)", (n, q, u, m))
@@ -439,7 +444,7 @@ def main():
                     st.rerun()
 
     # -----------------------------------------------------------
-    # 6. REPORTES
+    # 6. REPORTES HISTÓRICOS
     # -----------------------------------------------------------
     elif opcion == "📊 Reportes Históricos":
         st.header("Historial y Reportes")
@@ -449,7 +454,7 @@ def main():
         hoy = get_hora_peru().date()
         
         with tab_dia:
-            st.write(f"Ventas totales de hoy: **{hoy}** (Incluye todos los turnos)")
+            st.write(f"Ventas totales de hoy: **{hoy}**")
             df_v = run_query("SELECT * FROM ventas ORDER BY id DESC", return_data=True)
             if not df_v.empty:
                 df_v['fecha'] = pd.to_datetime(df_v['fecha']).dt.tz_convert('America/Lima')
@@ -465,7 +470,12 @@ def main():
                 except: pass
                 
                 buff = io.BytesIO()
-                with pd.ExcelWriter(buff) as w: v_hoy.to_excel(w, index=False)
+                
+                # CORRECCIÓN EXCEL: Convertir fecha timezone-aware a texto para que Excel no falle
+                v_hoy_excel = v_hoy.copy()
+                v_hoy_excel['fecha'] = v_hoy_excel['fecha'].astype(str)
+                
+                with pd.ExcelWriter(buff, engine='openpyxl') as w: v_hoy_excel.to_excel(w, index=False)
                 c2.download_button("Excel Día", buff.getvalue(), f"Dia_{hoy}.xlsx")
                 
                 st.dataframe(v_hoy)
