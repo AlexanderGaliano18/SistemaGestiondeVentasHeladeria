@@ -6,42 +6,33 @@ import io
 from fpdf import FPDF
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Heladería Final System", layout="wide", page_icon="🍦")
+st.set_page_config(page_title="Heladería System Final", layout="wide", page_icon="🍦")
 
 # --- ESTILOS ---
 st.markdown("""
 <style>
     .stMetric { border: 1px solid #ddd; padding: 10px; border-radius: 5px; background-color: #f9f9f9; }
     .merma-box { background-color: #fff5f5; border-left: 5px solid #ff4b4b; padding: 15px; border-radius: 5px; color: #8a1f1f; }
-    .cart-box { background-color: #e3f2fd; padding: 15px; border-radius: 10px; border: 1px solid #90caf9; }
+    .compra-box { background-color: #f0fff4; border-left: 5px solid #28a745; padding: 15px; border-radius: 5px; color: #155724; }
     .total-display { font-size: 26px; font-weight: bold; color: #1565c0; text-align: right; padding: 10px; }
-    .kardex-in { color: green; font-weight: bold; }
-    .kardex-out { color: red; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- BASE DE DATOS ---
 def init_db():
-    conn = sqlite3.connect('heladeria_master.db')
+    conn = sqlite3.connect('heladeria_final_v3.db')
     c = conn.cursor()
-    # 1. Menú
     c.execute('''CREATE TABLE IF NOT EXISTS menu (id INTEGER PRIMARY KEY, nombre TEXT, precio REAL, categoria TEXT)''')
-    # 2. Insumos
     c.execute('''CREATE TABLE IF NOT EXISTS insumos (id INTEGER PRIMARY KEY, nombre TEXT, cantidad REAL, unidad TEXT, minimo REAL DEFAULT 10)''')
-    # 3. Recetas
     c.execute('''CREATE TABLE IF NOT EXISTS recetas (id INTEGER PRIMARY KEY, menu_id INTEGER, insumo_id INTEGER, cantidad_insumo REAL)''')
-    # 4. Ventas
     c.execute('''CREATE TABLE IF NOT EXISTS ventas (id INTEGER PRIMARY KEY, producto_nombre TEXT, precio_base REAL, cantidad INTEGER, extras REAL, total REAL, metodo_pago TEXT, fecha TIMESTAMP)''')
-    # 5. Mermas
     c.execute('''CREATE TABLE IF NOT EXISTS mermas (id INTEGER PRIMARY KEY, insumo_nombre TEXT, cantidad REAL, razon TEXT, fecha TIMESTAMP)''')
-    # 6. MOVIMIENTOS (KARDEX) - NUEVO
     c.execute('''CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY, insumo_nombre TEXT, cantidad REAL, tipo TEXT, razon TEXT, fecha TIMESTAMP)''')
-    
     conn.commit()
     conn.close()
 
 def run_query(query, params=(), return_data=False):
-    conn = sqlite3.connect('heladeria_master.db')
+    conn = sqlite3.connect('heladeria_final_v3.db')
     c = conn.cursor()
     try:
         c.execute(query, params)
@@ -60,56 +51,46 @@ def run_query(query, params=(), return_data=False):
         st.error(f"Error BD: {e}")
         return None
 
-# --- REGISTRO DE MOVIMIENTOS (KARDEX) ---
+# --- LOG MOVIMIENTOS ---
 def log_movimiento(insumo, cantidad, tipo, razon):
-    """
-    Registra entradas y salidas en el historial.
-    tipo: 'ENTRADA' o 'SALIDA'
-    """
     run_query("INSERT INTO movimientos (insumo_nombre, cantidad, tipo, razon, fecha) VALUES (?,?,?,?,?)",
               (insumo, cantidad, tipo, razon, datetime.now()))
 
-# --- LÓGICA DE INVENTARIO (VENTAS) ---
+# --- PROCESAR VENTA (Descuento de Stock) ---
 def procesar_descuento_stock(producto_nombre, cantidad_vendida, cant_conos_extra, cant_toppings):
     mensajes = []
-    conn = sqlite3.connect('heladeria_master.db')
+    conn = sqlite3.connect('heladeria_final_v3.db')
     c = conn.cursor()
     
-    # 1. Descontar Insumos de Receta Base
+    # 1. Receta Base
     c.execute("SELECT id FROM menu WHERE nombre = ?", (producto_nombre,))
     res_prod = c.fetchone()
-    
     if res_prod:
         prod_id = res_prod[0]
         c.execute("SELECT r.insumo_id, r.cantidad_insumo, i.nombre FROM recetas r JOIN insumos i ON r.insumo_id = i.id WHERE r.menu_id = ?", (prod_id,))
         ingredientes = c.fetchall()
-        
         for insumo_id, cant_receta, nom_insumo in ingredientes:
             total_bajar = cant_receta * cantidad_vendida
             c.execute("UPDATE insumos SET cantidad = cantidad - ? WHERE id = ?", (total_bajar, insumo_id))
-            # LOG KARDEX
             c.execute("INSERT INTO movimientos (insumo_nombre, cantidad, tipo, razon, fecha) VALUES (?,?,?,?,?)",
                       (nom_insumo, total_bajar, 'SALIDA', f'Venta: {producto_nombre}', datetime.now()))
             mensajes.append(f"📉 {nom_insumo}: -{total_bajar}")
 
-    # 2. Extras (Conos)
+    # 2. Extras
     if cant_conos_extra > 0:
         c.execute("SELECT id, nombre FROM insumos WHERE nombre LIKE '%Cono%' OR nombre LIKE '%Barquillo%' LIMIT 1")
         res_cono = c.fetchone()
         if res_cono:
             c.execute("UPDATE insumos SET cantidad = cantidad - ? WHERE id = ?", (cant_conos_extra, res_cono[0]))
-            # LOG KARDEX
             c.execute("INSERT INTO movimientos (insumo_nombre, cantidad, tipo, razon, fecha) VALUES (?,?,?,?,?)",
                       (res_cono[1], cant_conos_extra, 'SALIDA', 'Venta: Cono Extra', datetime.now()))
             mensajes.append(f"📉 {res_cono[1]}: -{cant_conos_extra}")
 
-    # 3. Extras (Toppings)
     if cant_toppings > 0:
         c.execute("SELECT id, nombre FROM insumos WHERE nombre LIKE '%Topping%' LIMIT 1")
         res_top = c.fetchone()
         if res_top:
             c.execute("UPDATE insumos SET cantidad = cantidad - ? WHERE id = ?", (cant_toppings, res_top[0]))
-            # LOG KARDEX
             c.execute("INSERT INTO movimientos (insumo_nombre, cantidad, tipo, razon, fecha) VALUES (?,?,?,?,?)",
                       (res_top[1], cant_toppings, 'SALIDA', 'Venta: Topping Extra', datetime.now()))
             mensajes.append(f"📉 {res_top[1]}: -{cant_toppings}")
@@ -118,20 +99,19 @@ def procesar_descuento_stock(producto_nombre, cantidad_vendida, cant_conos_extra
     conn.close()
     return mensajes
 
-# --- PDF MEJORADO ---
+# --- PDF ---
 class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 14)
-        self.cell(0, 10, 'Reporte de Ventas - Heladería', 0, 1, 'C')
+        self.cell(0, 10, 'Reporte de Ventas', 0, 1, 'C')
         self.ln(5)
 
 def generar_pdf(df_ventas, total_dia, fecha):
     pdf = PDF()
     pdf.add_page()
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 10, txt=f"Fecha del Reporte: {fecha}", ln=1)
+    pdf.cell(0, 10, txt=f"Fecha: {fecha}", ln=1)
     
-    # Encabezados
     pdf.set_fill_color(230, 230, 230)
     pdf.set_font("Arial", 'B', 9)
     pdf.cell(20, 8, "Hora", 1, 0, 'C', 1)
@@ -143,9 +123,7 @@ def generar_pdf(df_ventas, total_dia, fecha):
     
     pdf.set_font("Arial", size=9)
     for _, row in df_ventas.iterrows():
-        # Formato de hora
         hora = row['fecha'].strftime('%H:%M') if isinstance(row['fecha'], pd.Timestamp) else str(row['fecha'])[-8:-3]
-        
         pdf.cell(20, 8, hora, 1, 0, 'C')
         pdf.cell(70, 8, str(row['producto_nombre'])[:30], 1)
         pdf.cell(20, 8, str(row['cantidad']), 1, 0, 'C')
@@ -155,77 +133,76 @@ def generar_pdf(df_ventas, total_dia, fecha):
         
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, f"TOTAL DEL DÍA: S/ {total_dia:,.2f}", 0, 1, 'R')
+    pdf.cell(0, 10, f"TOTAL: S/ {total_dia:,.2f}", 0, 1, 'R')
     return pdf.output(dest='S').encode('latin-1')
 
-# --- MAIN APP ---
+# --- MAIN ---
 def main():
     init_db()
     if 'carrito' not in st.session_state: st.session_state.carrito = []
     if 'logs' not in st.session_state: st.session_state.logs = []
 
-    st.sidebar.title("🍦 Heladería Manager")
-    opcion = st.sidebar.radio("Menú", ["🛒 Caja (Vender)", "📉 Registrar Merma", "📦 Inventario & Kardex", "📝 Menú (Productos)", "📊 Reportes & Excel"])
+    st.sidebar.title("🍦 Sistema Heladería")
+    
+    # MENÚ REORGANIZADO PARA EVITAR CONFLICTOS
+    opcion = st.sidebar.radio("Menú", [
+        "🛒 Caja (Vender)", 
+        "➕ Registrar Compra",  # <--- SECCIÓN SEPARADA PARA EVITAR ERRORES
+        "📉 Registrar Merma", 
+        "📦 Ver Inventario & Kardex", 
+        "📝 Menú (Productos)", 
+        "📊 Reportes"
+    ])
 
     # -----------------------------------------------------------
-    # 1. CAJA (VENDER)
+    # 1. CAJA (CON LOGICA DE CARRITO Y EXTRAS)
     # -----------------------------------------------------------
     if opcion == "🛒 Caja (Vender)":
         st.header("Punto de Venta")
-        
-        # Selección
         st.caption("1. Armar Pedido")
-        df_menu = run_query("SELECT * FROM menu ORDER BY nombre", return_data=True)
         
+        df_menu = run_query("SELECT * FROM menu ORDER BY nombre", return_data=True)
         if not df_menu.empty:
             c1, c2, c3 = st.columns([3, 1, 1])
             opciones = [f"{row['nombre']} | S/{row['precio']}" for i, row in df_menu.iterrows()]
             seleccion = c1.selectbox("Producto", opciones)
             cantidad = c2.number_input("Cantidad", 1, 50, 1)
             
-            # Parsing
             nombre_prod = seleccion.split(" | S/")[0]
             precio_base = float(seleccion.split(" | S/")[1])
             
-            # Extras Inteligentes
             cx1, cx2 = st.columns(2)
             n_toppings = cx1.number_input("¿Cuántos con Topping? (+S/1)", 0, cantidad * 5, 0)
             n_conos = cx2.number_input("¿Cuántos con Cono Extra? (+S/1)", 0, cantidad * 5, 0)
             
-            costo_extras = (n_toppings * 1.0) + (n_conos * 1.0)
-            subtotal = (precio_base * cantidad) + costo_extras
+            subtotal = (precio_base * cantidad) + (n_toppings * 1.0) + (n_conos * 1.0)
+            c3.metric("Subtotal", f"S/ {subtotal:.2f}")
             
-            c3.metric("Subtotal Item", f"S/ {subtotal:.2f}")
-            
-            if st.button("➕ Agregar a la Lista"):
+            if st.button("➕ Agregar al Carrito"):
                 st.session_state.carrito.append({
                     "producto": nombre_prod, "precio_base": precio_base, "cantidad": cantidad,
                     "cant_toppings": n_toppings, "cant_conos": n_conos, 
-                    "extras_costo": costo_extras, "subtotal": subtotal
+                    "extras_costo": (n_toppings+n_conos), "subtotal": subtotal
                 })
-                st.toast("Producto agregado")
+                st.toast("Agregado")
 
-        # Carrito
         st.divider()
         if len(st.session_state.carrito) > 0:
-            st.caption("2. Confirmar Venta")
+            st.caption("2. Confirmar")
             df_c = pd.DataFrame(st.session_state.carrito)
             st.dataframe(df_c[['cantidad', 'producto', 'cant_toppings', 'cant_conos', 'subtotal']], use_container_width=True)
             
-            total_g = sum(item['subtotal'] for item in st.session_state.carrito)
-            
+            total_g = sum(x['subtotal'] for x in st.session_state.carrito)
             c_tot, c_pay = st.columns([2, 1])
             c_tot.markdown(f"<div class='total-display'>TOTAL: S/ {total_g:.2f}</div>", unsafe_allow_html=True)
             
             with c_pay:
                 metodo = st.radio("Pago", ["Efectivo", "Yape", "Tarjeta"], horizontal=True)
-                if st.button("✅ COBRAR TODO", type="primary", use_container_width=True):
+                if st.button("✅ COBRAR", type="primary", use_container_width=True):
                     hora = datetime.now()
                     for item in st.session_state.carrito:
-                        # Guardar Venta
                         run_query("INSERT INTO ventas (producto_nombre, precio_base, cantidad, extras, total, metodo_pago, fecha) VALUES (?,?,?,?,?,?,?)",
                                   (item['producto'], item['precio_base'], item['cantidad'], item['extras_costo'], item['subtotal'], metodo, hora))
-                        # Descontar + Kardex
                         logs = procesar_descuento_stock(item['producto'], item['cantidad'], item['cant_conos'], item['cant_toppings'])
                         st.session_state.logs.extend(logs)
                     
@@ -238,98 +215,109 @@ def main():
                 st.rerun()
 
     # -----------------------------------------------------------
-    # 2. MERMA (SALIDA DE INVENTARIO)
+    # 2. REGISTRAR COMPRA (SECCIÓN NUEVA APARTE)
+    # -----------------------------------------------------------
+    elif opcion == "➕ Registrar Compra":
+        st.header("Entrada de Mercadería")
+        st.markdown("""<div class="compra-box">Aquí registras lo que compras para el negocio. Suma al inventario.</div>""", unsafe_allow_html=True)
+        st.divider()
+        
+        tipo_entrada = st.radio("¿Qué vas a ingresar?", ["Reponer Insumo Existente", "Crear Insumo Nuevo"], horizontal=True)
+        
+        if tipo_entrada == "Reponer Insumo Existente":
+            df_exist = run_query("SELECT * FROM insumos ORDER BY nombre", return_data=True)
+            if not df_exist.empty:
+                with st.form("form_reponer"):
+                    c1, c2 = st.columns([2, 1])
+                    ins_sel = c1.selectbox("Selecciona Insumo", df_exist['nombre'].unique())
+                    cant_add = c2.number_input("Cantidad que llegó", 0.1, 1000.0, 1.0)
+                    nota = st.text_input("Nota / Proveedor (Opcional)")
+                    
+                    if st.form_submit_button("➕ Sumar al Stock"):
+                        run_query("UPDATE insumos SET cantidad = cantidad + ? WHERE nombre = ?", (cant_add, ins_sel))
+                        log_movimiento(ins_sel, cant_add, 'ENTRADA', f"Compra: {nota}")
+                        st.success(f"Se agregaron {cant_add} a {ins_sel}.")
+            else:
+                st.warning("No hay insumos creados. Selecciona 'Crear Insumo Nuevo'.")
+
+        elif tipo_entrada == "Crear Insumo Nuevo":
+            with st.form("form_nuevo"):
+                st.write("Datos del Nuevo Insumo")
+                c1, c2 = st.columns(2)
+                new_nom = c1.text_input("Nombre (ej. Leche Entera)")
+                new_uni = c2.text_input("Unidad (ej. Litros)")
+                
+                c3, c4 = st.columns(2)
+                new_cant = c3.number_input("Cantidad Inicial", 0.0)
+                new_min = c4.number_input("Alerta Mínimo", 5.0)
+                
+                if st.form_submit_button("💾 Crear Insumo"):
+                    if new_nom:
+                        run_query("INSERT INTO insumos (nombre, cantidad, unidad, minimo) VALUES (?,?,?,?)", (new_nom, new_cant, new_uni, new_min))
+                        log_movimiento(new_nom, new_cant, 'ENTRADA', 'Insumo Nuevo')
+                        st.success(f"Insumo {new_nom} creado correctamente.")
+                    else:
+                        st.error("El nombre es obligatorio.")
+
+    # -----------------------------------------------------------
+    # 3. MERMAS
     # -----------------------------------------------------------
     elif opcion == "📉 Registrar Merma":
-        st.header("Registro de Mermas")
-        st.warning("Esto descuenta stock pero NO afecta el dinero.")
+        st.header("Salida por Merma")
+        st.markdown("""<div class="merma-box">Salida de stock por pérdida/daño. No afecta caja.</div>""", unsafe_allow_html=True)
         
         df_ins = run_query("SELECT * FROM insumos ORDER BY nombre", return_data=True)
         if not df_ins.empty:
             with st.form("merma"):
                 c1, c2 = st.columns([2, 1])
                 ins = c1.selectbox("Insumo", df_ins['nombre'].unique())
-                cant = c2.number_input("Cantidad", 0.1, 100.0, 1.0)
-                razon = st.text_input("Razón (Ej: Se cayó)")
+                cant = c2.number_input("Cantidad perdida", 0.1, 100.0, 1.0)
+                razon = st.text_input("Razón (Obligatorio)")
                 
-                if st.form_submit_button("Registrar Pérdida"):
+                if st.form_submit_button("Registrar Salida"):
                     if razon:
-                        # 1. Update Insumo
                         run_query("UPDATE insumos SET cantidad = cantidad - ? WHERE nombre = ?", (cant, ins))
-                        # 2. Log Merma
                         run_query("INSERT INTO mermas (insumo_nombre, cantidad, razon, fecha) VALUES (?,?,?,?)", (ins, cant, razon, datetime.now()))
-                        # 3. Log Kardex
                         log_movimiento(ins, cant, 'SALIDA', f'Merma: {razon}')
                         st.error(f"Descontado {cant} de {ins}")
-                        st.rerun()
                     else:
                         st.warning("Escribe la razón")
         else:
             st.info("No hay insumos.")
 
     # -----------------------------------------------------------
-    # 3. INVENTARIO & KARDEX (MOVIMIENTOS)
+    # 4. INVENTARIO & KARDEX
     # -----------------------------------------------------------
-    elif opcion == "📦 Inventario & Kardex":
-        st.header("Gestión de Inventario")
+    elif opcion == "📦 Ver Inventario & Kardex":
+        st.header("Estado del Inventario")
         
-        tab1, tab2 = st.tabs(["📦 Stock Actual & Compras", "📜 Historial (Kardex)"])
+        tab1, tab2 = st.tabs(["📦 Stock Actual", "📜 Kardex (Historial)"])
         
         with tab1:
-            # 1. Registrar Compra (Entrada)
-            with st.expander("➕ Registrar Compra / Entrada de Stock", expanded=True):
-                with st.form("compra"):
-                    c1, c2, c3 = st.columns(3)
-                    df_existente = run_query("SELECT * FROM insumos", return_data=True)
-                    lista_exist = df_existente['nombre'].unique() if not df_existente.empty else []
-                    
-                    modo = st.radio("Modo", ["Reponer Existente", "Crear Nuevo Insumo"], horizontal=True)
-                    
-                    if modo == "Reponer Existente" and len(lista_exist) > 0:
-                        nom_ins = st.selectbox("Insumo", lista_exist)
-                        cant_add = st.number_input("Cantidad a sumar", 0.1)
-                        uni = "" # No cambia
-                        min_alert = 0 # No cambia
-                    else:
-                        nom_ins = st.text_input("Nombre Nuevo Insumo")
-                        cant_add = st.number_input("Cantidad Inicial", 0.1)
-                        uni = st.text_input("Unidad (ej. Caja)")
-                        min_alert = st.number_input("Alerta Mínimo", 5)
-                    
-                    notas = st.text_input("Nota (ej. Compra Makro)")
-                    
-                    if st.form_submit_button("Registrar Entrada"):
-                        if modo == "Crear Nuevo Insumo":
-                            run_query("INSERT INTO insumos (nombre, cantidad, unidad, minimo) VALUES (?,?,?,?)", (nom_ins, cant_add, uni, min_alert))
-                        else:
-                            run_query("UPDATE insumos SET cantidad = cantidad + ? WHERE nombre = ?", (cant_add, nom_ins))
-                        
-                        # Log Kardex
-                        log_movimiento(nom_ins, cant_add, 'ENTRADA', f'Compra: {notas}')
-                        st.success("Stock actualizado.")
-                        st.rerun()
+            st.info("Puedes editar el stock manualmente en la tabla si hay errores de conteo.")
+            df_i = run_query("SELECT * FROM insumos ORDER BY cantidad ASC", return_data=True)
             
-            # 2. Tabla Stock
-            st.subheader("Stock Actual")
-            df_i = run_query("SELECT * FROM insumos ORDER BY cantidad", return_data=True)
-            st.dataframe(df_i, use_container_width=True)
+            edited_df = st.data_editor(df_i, key="stock_editor", hide_index=True, use_container_width=True, 
+                                       column_config={"id": st.column_config.NumberColumn(disabled=True)})
+            
+            if not df_i.equals(edited_df):
+                for i, r in edited_df.iterrows():
+                    run_query("UPDATE insumos SET nombre=?, cantidad=?, unidad=?, minimo=? WHERE id=?", 
+                              (r['nombre'], r['cantidad'], r['unidad'], r['minimo'], r['id']))
+                st.toast("Corrección manual guardada")
 
         with tab2:
-            st.subheader("Historial de Movimientos (Entradas y Salidas)")
+            st.subheader("Movimientos Recientes")
             df_k = run_query("SELECT * FROM movimientos ORDER BY id DESC", return_data=True)
-            
             if not df_k.empty:
-                # Colorear texto
                 def color_tipo(val):
-                    color = 'green' if val == 'ENTRADA' else 'red'
-                    return f'color: {color}; font-weight: bold'
-                
+                    return 'color: green; font-weight: bold' if val == 'ENTRADA' else 'color: red; font-weight: bold'
                 st.dataframe(df_k.style.map(color_tipo, subset=['tipo']), use_container_width=True)
             else:
-                st.info("No hay movimientos registrados aún.")
+                st.info("Sin movimientos.")
 
     # -----------------------------------------------------------
-    # 4. MENU Y PRODUCTOS (CRUD)
+    # 5. PRODUCTOS
     # -----------------------------------------------------------
     elif opcion == "📝 Menú (Productos)":
         st.header("Configurar Productos")
@@ -357,7 +345,7 @@ def main():
                         run_query("INSERT INTO recetas (menu_id, insumo_id, cantidad_insumo) VALUES (?,?,?)", (pid, ins_id, q_gasto))
                     st.success("Guardado")
                     st.rerun()
-        
+
         df_p = run_query("SELECT * FROM menu", return_data=True)
         for i, r in df_p.iterrows():
             c1, c2, c3 = st.columns([3, 1, 1])
@@ -369,55 +357,42 @@ def main():
                 st.rerun()
 
     # -----------------------------------------------------------
-    # 5. REPORTES & EXCEL (MEJORADO)
+    # 6. REPORTES
     # -----------------------------------------------------------
-    elif opcion == "📊 Reportes & Excel":
-        st.header("Reportes de Cierre")
+    elif opcion == "📊 Reportes":
+        st.header("Reportes")
         hoy = datetime.now().date()
         df_v = run_query("SELECT * FROM ventas ORDER BY id DESC", return_data=True)
         
         if not df_v.empty:
             df_v['fecha'] = pd.to_datetime(df_v['fecha'])
             v_hoy = df_v[df_v['fecha'].dt.date == hoy]
-            
             total = v_hoy['total'].sum()
             
-            # Métricas
             c1, c2, c3 = st.columns(3)
-            c1.metric("Total Vendido Hoy", f"S/ {total:,.2f}")
+            c1.metric("Venta Hoy", f"S/ {total:,.2f}")
             c2.metric("Tickets", len(v_hoy))
-            c3.metric("Promedio Ticket", f"S/ {total/len(v_hoy):,.2f}" if len(v_hoy)>0 else 0)
             
-            st.divider()
-            
-            # DESCARGAS
-            col_pdf, col_excel = st.columns(2)
-            
-            # 1. PDF
+            col_pdf, col_exc = st.columns(2)
             try:
-                pdf_bytes = generar_pdf(v_hoy, total, str(hoy))
-                col_pdf.download_button("📄 Descargar PDF (Detallado)", pdf_bytes, f"Reporte_{hoy}.pdf", "application/pdf")
-            except Exception as e:
-                col_pdf.error("Error PDF")
+                pdf = generar_pdf(v_hoy, total, str(hoy))
+                col_pdf.download_button("📄 PDF", pdf, f"R_{hoy}.pdf")
+            except: pass
             
-            # 2. EXCEL (NUEVO)
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                v_hoy.to_excel(writer, sheet_name='Ventas_Hoy', index=False)
-            col_excel.download_button("📊 Descargar Excel (.xlsx)", buffer.getvalue(), f"Ventas_{hoy}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            buff = io.BytesIO()
+            with pd.ExcelWriter(buff) as w: v_hoy.to_excel(w, index=False)
+            col_exc.download_button("📊 Excel", buff.getvalue(), f"V_{hoy}.xlsx")
             
-            st.subheader("Detalle Ventas Hoy")
-            st.dataframe(v_hoy[['fecha', 'producto_nombre', 'cantidad', 'extras', 'total', 'metodo_pago']], use_container_width=True)
-            
-            with st.expander("Borrar Ventas (Corrección)"):
+            st.dataframe(v_hoy)
+            with st.expander("Borrar Ventas"):
                 for i, r in v_hoy.iterrows():
                     c1, c2 = st.columns([4, 1])
                     c1.write(f"{r['producto_nombre']} - S/{r['total']}")
-                    if c2.button("❌", key=f"delv_{r['id']}"):
+                    if c2.button("❌", key=f"del_{r['id']}"):
                         run_query("DELETE FROM ventas WHERE id=?", (r['id'],))
                         st.rerun()
         else:
-            st.info("Sin ventas.")
+            st.info("Sin ventas hoy.")
 
 if __name__ == '__main__':
     main()
