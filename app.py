@@ -5,9 +5,10 @@ from datetime import datetime
 import io
 from fpdf import FPDF
 import pytz
+import os
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Sistema Heladería Master", layout="wide", page_icon="🍦")
+st.set_page_config(page_title="Neverita - Sistema de Gestión", layout="wide", page_icon="🍦")
 
 # --- NOMBRE DEL ARCHIVO ---
 DB_NAME = 'heladeria_v8_pdfs.db'
@@ -141,7 +142,7 @@ def procesar_descuento_stock(producto_nombre, cantidad_vendida, cant_conos_extra
 class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 14)
-        self.cell(0, 10, 'Reporte de Caja', 0, 1, 'C')
+        self.cell(0, 10, 'Neverita - Reporte de Caja', 0, 1, 'C')
         self.ln(5)
 
 def generar_pdf(df_ventas, total_dia, fecha, titulo="Reporte"):
@@ -184,7 +185,15 @@ def main():
     if 'carrito' not in st.session_state: st.session_state.carrito = []
     if 'logs' not in st.session_state: st.session_state.logs = []
 
-    st.sidebar.title("🍦 Heladería Manager")
+    # --- LOGO E IMAGEN LATERAL ---
+    try:
+        # Intenta cargar el logo desde la carpeta 'img'
+        st.sidebar.image("img/logo1.png", use_container_width=True)
+    except FileNotFoundError:
+        # Si no existe la carpeta o la imagen, muestra un aviso sutil
+        st.sidebar.warning("⚠️ Falta 'img/logo1.png'")
+
+    st.sidebar.title("Heladería Manager")
     
     opcion = st.sidebar.radio("Navegación", [
         "🛒 Caja (Vender)", 
@@ -316,7 +325,7 @@ def main():
                         # Generar PDF
                         pdf_bytes = generar_pdf(df_turno, total_turno, ahora_str, f"Cierre - {responsable}")
                         
-                        # GUARDAR PDF EN BASE DE DATOS (NUEVO)
+                        # GUARDAR PDF EN BASE DE DATOS
                         guardar_pdf_en_bd(nombre_pdf, pdf_bytes)
                         
                         st.download_button("⬇️ Descargar Reporte Cierre", pdf_bytes, nombre_pdf, "application/pdf")
@@ -534,7 +543,7 @@ def main():
                     with col1:
                         st.write(f"📄 **{row['nombre_archivo']}**")
                         # Fecha legible
-                        fecha_pdf = pd.to_datetime(row['fecha'])
+                        fecha_pdf = pd.to_datetime(row['fecha']).tz_convert('America/Lima')
                         st.caption(f"Creado: {fecha_pdf.strftime('%d/%m/%Y %H:%M')}")
                     
                     with col2:
