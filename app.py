@@ -5,13 +5,12 @@ from datetime import datetime
 import io
 from fpdf import FPDF
 import pytz
-import os
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Neverita - Sistema de Gestión", layout="wide", page_icon="🍦")
+st.set_page_config(page_title="Sistema Heladería Master", layout="wide", page_icon="🍦")
 
-# --- NOMBRE DEL ARCHIVO ---
-DB_NAME = 'heladeria_v8_pdfs.db'
+# --- NOMBRE DE LA BD ---
+DB_NAME = 'heladeria_v9_final.db'
 
 # --- HORA PERÚ ---
 def get_hora_peru():
@@ -20,11 +19,19 @@ def get_hora_peru():
 # --- ESTILOS ---
 st.markdown("""
 <style>
+    /* Métricas */
     .stMetric { background-color: rgba(128, 128, 128, 0.1); border: 1px solid rgba(128, 128, 128, 0.2); padding: 10px; border-radius: 5px; }
+    
+    /* Alertas Dashboard */
+    .alert-critico { background-color: rgba(255, 0, 0, 0.15); border-left: 5px solid #ff0000; padding: 10px; border-radius: 5px; color: #ff4b4b; font-weight: bold; margin-bottom: 5px;}
+    .alert-bajo { background-color: rgba(255, 193, 7, 0.15); border-left: 5px solid #ffc107; padding: 10px; border-radius: 5px; color: #d39e00; font-weight: bold; margin-bottom: 5px;}
+    .star-product { background-color: rgba(0, 123, 255, 0.1); border: 1px solid #007bff; padding: 15px; border-radius: 10px; text-align: center; }
+    
+    /* Cajas Generales */
     .merma-box { background-color: rgba(255, 75, 75, 0.1); border-left: 5px solid #ff4b4b; padding: 15px; border-radius: 5px; }
     .compra-box { background-color: rgba(40, 167, 69, 0.1); border-left: 5px solid #28a745; padding: 15px; border-radius: 5px; }
     .cierre-box { background-color: rgba(255, 193, 7, 0.1); border-left: 5px solid #ffc107; padding: 15px; border-radius: 5px; }
-    .respaldo-box { background-color: rgba(0, 123, 255, 0.1); border: 1px solid #007bff; padding: 15px; border-radius: 5px; }
+    .respaldo-box { background-color: rgba(23, 162, 184, 0.1); border: 1px solid #17a2b8; padding: 15px; border-radius: 5px; }
     .total-display { font-size: 26px; font-weight: bold; text-align: right; padding: 10px; border-top: 1px solid rgba(128, 128, 128, 0.2); }
     
     /* Tabs */
@@ -45,10 +52,7 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS mermas (id INTEGER PRIMARY KEY, insumo_nombre TEXT, cantidad REAL, razon TEXT, fecha TIMESTAMP)''')
     c.execute('''CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY, insumo_nombre TEXT, cantidad REAL, tipo TEXT, razon TEXT, fecha TIMESTAMP)''')
     c.execute('''CREATE TABLE IF NOT EXISTS cierres (id INTEGER PRIMARY KEY, fecha_cierre TIMESTAMP, total_turno REAL, responsable TEXT)''')
-    
-    # NUEVA TABLA PARA GUARDAR PDFs (BLOB)
     c.execute('''CREATE TABLE IF NOT EXISTS reportes_pdf (id INTEGER PRIMARY KEY, fecha TIMESTAMP, nombre_archivo TEXT, pdf_data BLOB)''')
-    
     conn.commit()
     conn.close()
 
@@ -71,7 +75,7 @@ def run_query(query, params=(), return_data=False):
         conn.close()
         return None
 
-# --- FUNCIONES DE CIERRE ---
+# --- FUNCIONES AUXILIARES ---
 def get_ultimo_cierre():
     df = run_query("SELECT fecha_cierre FROM cierres ORDER BY id DESC LIMIT 1", return_data=True)
     if not df.empty:
@@ -82,17 +86,48 @@ def cerrar_turno_db(total, responsable):
     ahora = get_hora_peru()
     run_query("INSERT INTO cierres (fecha_cierre, total_turno, responsable) VALUES (?,?,?)", (ahora, total, responsable))
 
-# --- GESTIÓN DE PDFs EN BD ---
 def guardar_pdf_en_bd(nombre_archivo, pdf_bytes):
     ahora = get_hora_peru()
-    # Guardamos los bytes directamente en la columna BLOB
     run_query("INSERT INTO reportes_pdf (fecha, nombre_archivo, pdf_data) VALUES (?,?,?)", (ahora, nombre_archivo, pdf_bytes))
 
-# --- LOG MOVIMIENTOS ---
 def log_movimiento(insumo, cantidad, tipo, razon):
     ahora = get_hora_peru()
     run_query("INSERT INTO movimientos (insumo_nombre, cantidad, tipo, razon, fecha) VALUES (?,?,?,?,?)",
               (insumo, cantidad, tipo, razon, ahora))
+
+# --- FUNCIONES DASHBOARD (ALERTAS Y ESTRELLA) ---
+def obtener_alertas_stock():
+    """Devuelve HTML con las alertas de stock"""
+    df = run_query("SELECT nombre, cantidad, minimo, unidad FROM insumos", return_data=True)
+    alertas_html = ""
+    if not df.empty:
+        for _, row in df.iterrows():
+            stock = row['cantidad']
+            minimo = row['minimo']
+            nombre = row['nombre']
+            
+            if stock <= (minimo / 2): # Crítico
+                alertas_html += f"<div class='alert-critico'>🚨 CRÍTICO: {nombre} ({stock} {row['unidad']})</div>"
+            elif stock <= minimo: # Bajo
+                alertas_html += f"<div class='alert-bajo'>⚠️ BAJO: {nombre} ({stock} {row['unidad']})</div>"
+    
+    return alertas_html
+
+def obtener_producto_estrella():
+    """Devuelve el producto más vendido de HOY (Hora Perú)"""
+    hoy = get_hora_peru().date()
+    df = run_query("SELECT * FROM ventas", return_data=True)
+    
+    if not df.empty:
+        df['fecha'] = pd.to_datetime(df['fecha']).dt.tz_convert('America/Lima')
+        v_hoy = df[df['fecha'].dt.date == hoy]
+        
+        if not v_hoy.empty:
+            # Agrupar por producto y sumar cantidad
+            top = v_hoy.groupby('producto_nombre')['cantidad'].sum().sort_values(ascending=False).head(1)
+            if not top.empty:
+                return top.index[0], int(top.values[0])
+    return None, 0
 
 # --- PROCESAR VENTA ---
 def procesar_descuento_stock(producto_nombre, cantidad_vendida, cant_conos_extra, cant_toppings):
@@ -101,7 +136,6 @@ def procesar_descuento_stock(producto_nombre, cantidad_vendida, cant_conos_extra
     c = conn.cursor()
     ahora = get_hora_peru()
     
-    # 1. Receta Base
     c.execute("SELECT id FROM menu WHERE nombre = ?", (producto_nombre,))
     res_prod = c.fetchone()
     if res_prod:
@@ -115,7 +149,6 @@ def procesar_descuento_stock(producto_nombre, cantidad_vendida, cant_conos_extra
                       (nom_insumo, total_bajar, 'SALIDA', f'Venta: {producto_nombre}', ahora))
             mensajes.append(f"📉 {nom_insumo}: -{total_bajar}")
 
-    # 2. Extras
     if cant_conos_extra > 0:
         c.execute("SELECT id, nombre FROM insumos WHERE nombre LIKE '%Cono%' OR nombre LIKE '%Barquillo%' LIMIT 1")
         res_cono = c.fetchone()
@@ -142,7 +175,7 @@ def procesar_descuento_stock(producto_nombre, cantidad_vendida, cant_conos_extra
 class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 14)
-        self.cell(0, 10, 'Neverita - Reporte de Caja', 0, 1, 'C')
+        self.cell(0, 10, 'Neverita - Reporte', 0, 1, 'C')
         self.ln(5)
 
 def generar_pdf(df_ventas, total_dia, fecha, titulo="Reporte"):
@@ -185,32 +218,56 @@ def main():
     if 'carrito' not in st.session_state: st.session_state.carrito = []
     if 'logs' not in st.session_state: st.session_state.logs = []
 
-    # --- LOGO E IMAGEN LATERAL ---
+    # Logo
     try:
-        # Intenta cargar el logo desde la carpeta 'img'
         st.sidebar.image("img/logo1.png", use_container_width=True)
-    except FileNotFoundError:
-        # Si no existe la carpeta o la imagen, muestra un aviso sutil
-        st.sidebar.warning("⚠️ Falta 'img/logo1.png'")
+    except:
+        st.sidebar.warning("Falta logo")
 
-    st.sidebar.title("Heladería Manager")
+    st.sidebar.title("Menú Principal")
     
-    opcion = st.sidebar.radio("Navegación", [
+    opcion = st.sidebar.radio("Ir a:", [
         "🛒 Caja (Vender)", 
         "🔒 Cierre de Caja", 
         "📦 Inventario", 
         "📉 Mermas", 
         "📝 Productos", 
         "📊 Reportes",
-        "💾 Respaldo (Guardar/Cargar)"
+        "💾 Respaldo"
     ])
 
     # -----------------------------------------------------------
-    # 1. CAJA (VENDER)
+    # 1. CAJA (VENDER) - CON DASHBOARD RECUPERADO
     # -----------------------------------------------------------
     if opcion == "🛒 Caja (Vender)":
         st.header("Punto de Venta")
         
+        # --- DASHBOARD SUPERIOR (ALERTAS Y ESTRELLA) ---
+        col_alerts, col_star = st.columns([2, 1])
+        
+        with col_alerts:
+            html_alerts = obtener_alertas_stock()
+            if html_alerts:
+                st.markdown(html_alerts, unsafe_allow_html=True)
+            else:
+                st.success("✅ Inventario Saludable (Sin alertas)")
+        
+        with col_star:
+            nom_star, cant_star = obtener_producto_estrella()
+            if nom_star:
+                st.markdown(f"""
+                <div class='star-product'>
+                    🏆 <b>Más Vendido Hoy:</b><br>
+                    <span style='font-size: 1.2em'>{nom_star}</span><br>
+                    ({cant_star} un.)
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.info("Sin ventas hoy")
+        
+        st.divider()
+        
+        # --- DINERO EN CAJA ---
         ultimo_cierre = get_ultimo_cierre()
         df_todas = run_query("SELECT * FROM ventas", return_data=True)
         total_turno_actual = 0.0
@@ -225,8 +282,7 @@ def main():
         
         st.metric("💰 Dinero en Caja (Corte Actual)", f"S/ {total_turno_actual:,.2f}")
         
-        st.divider()
-        st.caption("Armar Pedido")
+        st.subheader("Nueva Venta")
         
         df_menu = run_query("SELECT * FROM menu ORDER BY nombre", return_data=True)
         if not df_menu.empty:
@@ -239,8 +295,8 @@ def main():
             precio_base = float(seleccion.split(" | S/")[1])
             
             cx1, cx2 = st.columns(2)
-            n_toppings = cx1.number_input("¿Cuántos llevan Topping? (+S/1)", 0, cantidad * 5, 0)
-            n_conos = cx2.number_input("¿Cuántos llevan Cono Extra? (+S/1)", 0, cantidad * 5, 0)
+            n_toppings = cx1.number_input("¿Cuántos con Topping?", 0, cantidad * 5, 0)
+            n_conos = cx2.number_input("¿Cuántos con Cono Extra?", 0, cantidad * 5, 0)
             
             subtotal = (precio_base * cantidad) + (n_toppings * 1.0) + (n_conos * 1.0)
             c3.metric("Subtotal", f"S/ {subtotal:.2f}")
@@ -255,7 +311,7 @@ def main():
 
         st.divider()
         if len(st.session_state.carrito) > 0:
-            st.caption("Confirmar")
+            st.write("### 🛒 Carrito de Compras")
             df_c = pd.DataFrame(st.session_state.carrito)
             st.dataframe(df_c[['cantidad', 'producto', 'cant_toppings', 'cant_conos', 'subtotal']], use_container_width=True)
             
@@ -285,9 +341,8 @@ def main():
     # 2. CIERRE DE CAJA
     # -----------------------------------------------------------
     elif opcion == "🔒 Cierre de Caja":
-        st.header("Cierre de Caja / Corte")
-        st.markdown("""<div class="cierre-box">⚠️ Al cerrar caja, el contador <b>se reinicia a 0</b>.</div>""", unsafe_allow_html=True)
-        st.divider()
+        st.header("Cierre de Caja")
+        st.markdown("""<div class="cierre-box">⚠️ Al cerrar caja, el contador se reinicia a 0.</div>""", unsafe_allow_html=True)
         
         ultimo_cierre = get_ultimo_cierre()
         df_todas = run_query("SELECT * FROM ventas", return_data=True)
@@ -305,69 +360,57 @@ def main():
         col_info, col_action = st.columns([2, 1])
         
         with col_info:
-            st.subheader("Resumen Actual (Sin cerrar)")
             inicio_str = ultimo_cierre.strftime('%d/%m/%Y %H:%M') if ultimo_cierre else 'Inicio histórico'
-            st.write(f"Desde: **{inicio_str}**")
             st.metric("Total a Cerrar", f"S/ {total_turno:,.2f}")
-            st.write(f"Ventas: {len(df_turno)}")
+            st.caption(f"Ventas desde: {inicio_str}")
         
         with col_action:
-            st.write("Acción")
-            responsable = st.text_input("Responsable del Cierre")
-            
+            responsable = st.text_input("Responsable")
             if st.button("🔒 CERRAR CAJA AHORA", type="primary"):
                 if responsable:
                     cerrar_turno_db(total_turno, responsable)
                     try:
                         ahora_str = get_hora_peru().strftime('%d-%m-%Y_%H-%M')
                         nombre_pdf = f"Cierre_{ahora_str}_{responsable}.pdf"
-                        
-                        # Generar PDF
                         pdf_bytes = generar_pdf(df_turno, total_turno, ahora_str, f"Cierre - {responsable}")
-                        
-                        # GUARDAR PDF EN BASE DE DATOS
                         guardar_pdf_en_bd(nombre_pdf, pdf_bytes)
-                        
-                        st.download_button("⬇️ Descargar Reporte Cierre", pdf_bytes, nombre_pdf, "application/pdf")
-                        st.success("✅ Caja Cerrada. Contador en 0. PDF Guardado en Historial.")
+                        st.download_button("⬇️ Descargar Reporte", pdf_bytes, nombre_pdf, "application/pdf")
+                        st.success("Caja Cerrada.")
                     except Exception as e:
-                        st.error(f"Caja cerrada, pero error PDF: {e}")
+                        st.error(f"Error PDF: {e}")
                 else:
-                    st.warning("Escribe nombre responsable.")
+                    st.warning("Falta nombre.")
         
-        # Eliminar venta antes de cierre
         if not df_turno.empty:
             st.divider()
-            with st.expander("📝 Gestionar / Eliminar Ventas del Turno Actual"):
+            with st.expander("📝 Eliminar Ventas del Turno Actual"):
                 for i, row in df_turno.iterrows():
                     cols = st.columns([1, 3, 2, 2, 1])
                     cols[0].write(row['fecha'].strftime('%H:%M'))
                     cols[1].write(f"{row['producto_nombre']}")
                     cols[2].write(f"Cant: {row['cantidad']}")
                     cols[3].write(f"S/ {row['total']:.2f}")
-                    if cols[4].button("❌", key=f"del_v_t_{row['id']}"):
+                    if cols[4].button("❌", key=f"del_vt_{row['id']}"):
                         run_query("DELETE FROM ventas WHERE id=?", (row['id'],))
-                        st.warning("Venta eliminada.")
                         st.rerun()
 
     # -----------------------------------------------------------
     # 3. INVENTARIO
     # -----------------------------------------------------------
     elif opcion == "📦 Inventario":
-        st.header("Gestión de Inventario")
+        st.header("Inventario")
         tab1, tab2, tab3 = st.tabs(["Stock", "Compras", "Kardex"])
         
         with tab1:
-            st.info("Doble click para editar stock.")
             df_i = run_query("SELECT * FROM insumos ORDER BY cantidad ASC", return_data=True)
             edited_df = st.data_editor(df_i, key="ed_st", hide_index=True, use_container_width=True, column_config={"id": st.column_config.NumberColumn(disabled=True)})
             if not df_i.equals(edited_df):
                 for i, r in edited_df.iterrows():
                     run_query("UPDATE insumos SET nombre=?, cantidad=?, unidad=?, minimo=? WHERE id=?", (r['nombre'], r['cantidad'], r['unidad'], r['minimo'], r['id']))
-                st.toast("Actualizado")
+                st.toast("Guardado")
 
         with tab2:
-            st.markdown("""<div class="compra-box">Registrar Compras</div>""", unsafe_allow_html=True)
+            st.markdown("""<div class="compra-box">Ingreso de Mercadería</div>""", unsafe_allow_html=True)
             mode = st.radio("Tipo:", ["Reponer", "Nuevo"], horizontal=True)
             if mode == "Reponer":
                 df_x = run_query("SELECT * FROM insumos", return_data=True)
@@ -375,13 +418,12 @@ def main():
                     with st.form("rep"):
                         c1, c2 = st.columns(2)
                         ins = c1.selectbox("Insumo", df_x['nombre'].unique())
-                        
                         t_dato = c2.radio("Medida", ["Unidades", "Decimales"], horizontal=True)
                         step = 1.0 if "Unidades" in t_dato else 0.1
                         fmt = "%d" if "Unidades" in t_dato else "%.2f"
-                        min_val = 1.0 if "Unidades" in t_dato else 0.1
+                        min_v = 1.0 if "Unidades" in t_dato else 0.1
                         
-                        cant = st.number_input("Cantidad", step=step, format=fmt, min_value=min_val)
+                        cant = st.number_input("Cantidad", step=step, format=fmt, min_value=min_v)
                         nota = st.text_input("Nota")
                         if st.form_submit_button("Sumar"):
                             run_query("UPDATE insumos SET cantidad=cantidad+? WHERE nombre=?", (cant, ins))
@@ -393,13 +435,12 @@ def main():
                     n = c1.text_input("Nombre")
                     u = c2.text_input("Unidad")
                     c3, c4 = st.columns(2)
-                    
                     t_dato = st.radio("Medida", ["Unidades", "Decimales"], horizontal=True)
                     step = 1.0 if "Unidades" in t_dato else 0.1
                     fmt = "%d" if "Unidades" in t_dato else "%.2f"
-                    min_val = 1.0 if "Unidades" in t_dato else 0.0
+                    min_v = 1.0 if "Unidades" in t_dato else 0.0
                     
-                    q = c3.number_input("Cant", step=step, format=fmt, min_value=min_val)
+                    q = c3.number_input("Cant", step=step, format=fmt, min_value=min_v)
                     m = c4.number_input("Min", 5.0)
                     if st.form_submit_button("Crear"):
                         run_query("INSERT INTO insumos (nombre, cantidad, unidad, minimo) VALUES (?,?,?,?)", (n, q, u, m))
@@ -418,7 +459,7 @@ def main():
     # -----------------------------------------------------------
     elif opcion == "📉 Mermas":
         st.header("Mermas")
-        st.markdown("""<div class="merma-box">Salida sin venta.</div>""", unsafe_allow_html=True)
+        st.markdown("""<div class="merma-box">Salida sin dinero.</div>""", unsafe_allow_html=True)
         df_ins = run_query("SELECT * FROM insumos", return_data=True)
         if not df_ins.empty:
             with st.form("merm"):
@@ -426,12 +467,11 @@ def main():
                 i_sel = c1.selectbox("Insumo", df_ins['nombre'].unique())
                 
                 t_dato = c2.radio("Medida", ["Unidades", "Decimales"], horizontal=True)
-                if "Unidades" in t_dato:
-                    step_m, min_m, fmt_m, val_def = 1, 1, "%d", 1
-                else:
-                    step_m, min_m, fmt_m, val_def = 0.1, 0.1, "%.2f", 0.1
+                step_m = 1.0 if "Unidades" in t_dato else 0.1
+                fmt_m = "%d" if "Unidades" in t_dato else "%.2f"
+                min_m = 1.0 if "Unidades" in t_dato else 0.1
                 
-                q = st.number_input("Cantidad", step=step_m, format=fmt_m, min_value=min_m, value=val_def)
+                q = st.number_input("Cantidad", step=step_m, format=fmt_m, min_value=min_m)
                 r = st.text_input("Razón")
                 if st.form_submit_button("Registrar"):
                     run_query("UPDATE insumos SET cantidad=cantidad-? WHERE nombre=?", (q, i_sel))
@@ -459,7 +499,6 @@ def main():
                         s = st.selectbox("Gasta", list(mapper.keys()))
                         iid = mapper[s]
                         qg = st.number_input("Cant", 0.1)
-                
                 if st.form_submit_button("Guardar"):
                     pid = run_query("INSERT INTO menu (nombre, precio, categoria) VALUES (?,?,?)", (n, p, cat))
                     if vinc and iid:
@@ -479,118 +518,80 @@ def main():
                     st.rerun()
 
     # -----------------------------------------------------------
-    # 6. REPORTES HISTÓRICOS
+    # 6. REPORTES
     # -----------------------------------------------------------
     elif opcion == "📊 Reportes":
-        st.header("Historial y Reportes")
-        tab_dia, tab_cierres, tab_pdfs = st.tabs(["Ventas del Día (Global)", "Historial de Cierres", "🗄️ Historial PDFs"])
+        st.header("Reportes")
+        tab_dia, tab_cierres, tab_pdfs = st.tabs(["Ventas del Día", "Cierres", "Historial PDF"])
         
         hoy = get_hora_peru().date()
         
         with tab_dia:
-            st.write(f"Ventas totales de hoy: **{hoy}**")
+            st.write(f"Total Día: **{hoy}**")
             df_v = run_query("SELECT * FROM ventas ORDER BY id DESC", return_data=True)
             if not df_v.empty:
                 df_v['fecha'] = pd.to_datetime(df_v['fecha']).dt.tz_convert('America/Lima')
                 v_hoy = df_v[df_v['fecha'].dt.date == hoy]
                 tot = v_hoy['total'].sum()
-                st.metric("Total Día", f"S/ {tot:,.2f}")
+                st.metric("Total", f"S/ {tot:,.2f}")
                 
                 c1, c2 = st.columns(2)
                 try:
-                    pdf = generar_pdf(v_hoy, tot, str(hoy), "Reporte Global del Día")
-                    c1.download_button("PDF Día", pdf, f"Dia_{hoy}.pdf")
+                    pdf = generar_pdf(v_hoy, tot, str(hoy), "Reporte Global")
+                    c1.download_button("PDF", pdf, f"Dia_{hoy}.pdf")
                 except: pass
                 
                 buff = io.BytesIO()
-                v_hoy_excel = v_hoy.copy()
-                v_hoy_excel['fecha'] = v_hoy_excel['fecha'].astype(str)
-                with pd.ExcelWriter(buff, engine='openpyxl') as w: v_hoy_excel.to_excel(w, index=False)
-                c2.download_button("Excel Día", buff.getvalue(), f"Dia_{hoy}.xlsx")
+                v_hoy_exc = v_hoy.copy()
+                v_hoy_exc['fecha'] = v_hoy_exc['fecha'].astype(str)
+                with pd.ExcelWriter(buff, engine='openpyxl') as w: v_hoy_exc.to_excel(w, index=False)
+                c2.download_button("Excel", buff.getvalue(), f"Dia_{hoy}.xlsx")
                 
-                # ELIMINAR VENTA HISTÓRICA
-                with st.expander("🛠️ Gestionar / Eliminar Ventas Históricas"):
+                with st.expander("Eliminar Ventas Históricas"):
                     for i, r in v_hoy.iterrows():
-                        cols = st.columns([1, 3, 2, 2, 1])
-                        cols[0].write(r['fecha'].strftime('%H:%M'))
-                        cols[1].write(r['producto_nombre'])
-                        cols[2].write(f"Cant: {r['cantidad']}")
-                        cols[3].write(f"S/ {r['total']:.2f}")
-                        if cols[4].button("❌", key=f"del_h_{r['id']}"):
+                        cols = st.columns([2, 2, 1])
+                        cols[0].write(r['producto_nombre'])
+                        cols[1].write(f"S/ {r['total']}")
+                        if cols[2].button("❌", key=f"del_h_{r['id']}"):
                             run_query("DELETE FROM ventas WHERE id=?", (r['id'],))
                             st.rerun()
         
         with tab_cierres:
-            st.write("Registro de turnos cerrados")
             df_c = run_query("SELECT * FROM cierres ORDER BY id DESC", return_data=True)
             if not df_c.empty:
-                df_c['fecha_cierre'] = pd.to_datetime(df_c['fecha_cierre']).dt.tz_convert('America/Lima').dt.strftime('%d/%m/%Y %H:%M')
+                df_c['fecha_cierre'] = pd.to_datetime(df_c['fecha_cierre']).dt.tz_convert('America/Lima').dt.strftime('%d/%m %H:%M')
                 st.dataframe(df_c, use_container_width=True)
-            else:
-                st.info("No hay cierres.")
 
-        # --- NUEVA PESTAÑA DE PDFs ---
         with tab_pdfs:
-            st.subheader("Reportes PDF Guardados")
-            st.caption("Estos archivos están guardados dentro de la base de datos.")
-            
-            df_pdfs = run_query("SELECT id, fecha, nombre_archivo, pdf_data FROM reportes_pdf ORDER BY id DESC", return_data=True)
-            
-            if not df_pdfs.empty:
-                for index, row in df_pdfs.iterrows():
-                    col1, col2, col3 = st.columns([3, 1, 1])
-                    
-                    with col1:
-                        st.write(f"📄 **{row['nombre_archivo']}**")
-                        # Fecha legible
-                        fecha_pdf = pd.to_datetime(row['fecha']).tz_convert('America/Lima')
-                        st.caption(f"Creado: {fecha_pdf.strftime('%d/%m/%Y %H:%M')}")
-                    
-                    with col2:
-                        st.download_button(
-                            label="⬇️ Descargar",
-                            data=row['pdf_data'],
-                            file_name=row['nombre_archivo'],
-                            mime="application/pdf",
-                            key=f"down_pdf_{row['id']}"
-                        )
-                    
-                    with col3:
-                        if st.button("🗑️ Borrar", key=f"del_pdf_{row['id']}"):
-                            run_query("DELETE FROM reportes_pdf WHERE id=?", (row['id'],))
-                            st.success("Borrado.")
-                            st.rerun()
-                    st.divider()
-            else:
-                st.info("No hay PDFs guardados en el historial.")
+            df_p = run_query("SELECT id, fecha, nombre_archivo, pdf_data FROM reportes_pdf ORDER BY id DESC", return_data=True)
+            if not df_p.empty:
+                for i, r in df_p.iterrows():
+                    c1, c2, c3 = st.columns([3, 1, 1])
+                    c1.write(r['nombre_archivo'])
+                    c2.download_button("⬇️", r['pdf_data'], r['nombre_archivo'])
+                    if c3.button("🗑️", key=f"dpdf_{r['id']}"):
+                        run_query("DELETE FROM reportes_pdf WHERE id=?", (r['id'],))
+                        st.rerun()
 
     # -----------------------------------------------------------
     # 7. RESPALDO
     # -----------------------------------------------------------
-    elif opcion == "💾 Respaldo (Guardar/Cargar)":
-        st.header("Copia de Seguridad")
-        st.markdown("""<div class='respaldo-box'><b>⚠️ IMPORTANTE:</b> Descarga tu copia cada noche. Ahora incluye también los PDFs históricos.</div>""", unsafe_allow_html=True)
-        st.divider()
-        
+    elif opcion == "💾 Respaldo":
+        st.header("Respaldo")
+        st.markdown("""<div class='respaldo-box'>Descarga tu copia diariamente.</div>""", unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("1. Descargar (Guardar)")
-            if st.button("⬇️ Generar archivo de respaldo"):
+            if st.button("⬇️ Descargar BD"):
                 try:
                     with open(DB_NAME, "rb") as fp:
-                        st.download_button(label="💾 Click para Descargar .db", data=fp, file_name=f"Respaldo_{get_hora_peru().strftime('%Y-%m-%d')}.db", mime="application/octet-stream")
-                except:
-                    st.error("No se encontró la base de datos.")
-
+                        st.download_button("Guardar .db", fp, f"Respaldo_{get_hora_peru().date()}.db")
+                except: st.error("Error BD")
         with c2:
-            st.subheader("2. Subir (Restaurar)")
-            uploaded_file = st.file_uploader("Sube aquí tu archivo .db", type="db")
-            if uploaded_file is not None:
-                if st.button("🔄 Restaurar Datos"):
-                    with open(DB_NAME, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    st.success("¡Datos restaurados con éxito! La página se recargará.")
-                    st.rerun()
+            up = st.file_uploader("Subir .db", type="db")
+            if up and st.button("Restaurar"):
+                with open(DB_NAME, "wb") as f: f.write(up.getbuffer())
+                st.success("Restaurado")
+                st.rerun()
 
 if __name__ == '__main__':
     main()
