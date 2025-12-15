@@ -6,31 +6,36 @@ import io
 from fpdf import FPDF
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Heladería CRUD", layout="wide", page_icon="🍦")
+st.set_page_config(page_title="Heladería Final", layout="wide", page_icon="🍦")
 
 # --- ESTILOS ---
 st.markdown("""
 <style>
     .stMetric { border: 1px solid #ddd; padding: 10px; border-radius: 5px; }
-    .success-msg { color: green; font-weight: bold; }
-    .warning-msg { color: orange; font-weight: bold; }
+    .merma-box { background-color: #fff5f5; border-left: 5px solid #ff4b4b; padding: 15px; border-radius: 5px; color: #8a1f1f; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- BASE DE DATOS ---
 def init_db():
-    conn = sqlite3.connect('heladeria_crud.db')
+    conn = sqlite3.connect('heladeria_completa.db')
     c = conn.cursor()
-    # Tablas
+    # 1. Menú
     c.execute('''CREATE TABLE IF NOT EXISTS menu (id INTEGER PRIMARY KEY, nombre TEXT, precio REAL, categoria TEXT)''')
+    # 2. Insumos
     c.execute('''CREATE TABLE IF NOT EXISTS insumos (id INTEGER PRIMARY KEY, nombre TEXT, cantidad REAL, unidad TEXT, minimo REAL DEFAULT 10)''')
+    # 3. Recetas
     c.execute('''CREATE TABLE IF NOT EXISTS recetas (id INTEGER PRIMARY KEY, menu_id INTEGER, insumo_id INTEGER, cantidad_insumo REAL)''')
+    # 4. Ventas
     c.execute('''CREATE TABLE IF NOT EXISTS ventas (id INTEGER PRIMARY KEY, producto_nombre TEXT, precio_base REAL, cantidad INTEGER, extras REAL, total REAL, metodo_pago TEXT, fecha TIMESTAMP)''')
+    # 5. MERMAS (NUEVA TABLA)
+    c.execute('''CREATE TABLE IF NOT EXISTS mermas (id INTEGER PRIMARY KEY, insumo_nombre TEXT, cantidad REAL, razon TEXT, fecha TIMESTAMP)''')
+    
     conn.commit()
     conn.close()
 
 def run_query(query, params=(), return_data=False):
-    conn = sqlite3.connect('heladeria_crud.db')
+    conn = sqlite3.connect('heladeria_completa.db')
     c = conn.cursor()
     try:
         c.execute(query, params)
@@ -49,23 +54,19 @@ def run_query(query, params=(), return_data=False):
         st.error(f"Error BD: {e}")
         return None
 
-# --- LÓGICA DE INVENTARIO (FIXED) ---
+# --- LÓGICA DE INVENTARIO (VENTAS) ---
 def procesar_descuento_stock(producto_nombre, cantidad_vendida, tiene_cono, tiene_top):
-    """
-    Busca el producto por nombre, encuentra su receta y descuenta el stock.
-    Devuelve una lista de mensajes de lo que hizo para mostrar al usuario.
-    """
     mensajes = []
-    conn = sqlite3.connect('heladeria_crud.db')
+    conn = sqlite3.connect('heladeria_completa.db')
     c = conn.cursor()
     
-    # 1. Buscar ID del producto en el Menú
+    # Buscar producto
     c.execute("SELECT id FROM menu WHERE nombre = ?", (producto_nombre,))
     res_prod = c.fetchone()
     
     if res_prod:
         prod_id = res_prod[0]
-        # 2. Buscar si tiene receta
+        # Buscar receta vinculada
         c.execute("SELECT r.insumo_id, r.cantidad_insumo, i.nombre FROM recetas r JOIN insumos i ON r.insumo_id = i.id WHERE r.menu_id = ?", (prod_id,))
         ingredientes = c.fetchall()
         
@@ -75,9 +76,9 @@ def procesar_descuento_stock(producto_nombre, cantidad_vendida, tiene_cono, tien
                 c.execute("UPDATE insumos SET cantidad = cantidad - ? WHERE id = ?", (total_bajar, insumo_id))
                 mensajes.append(f"📉 {nom_insumo}: -{total_bajar}")
         else:
-            mensajes.append(f"ℹ️ {producto_nombre} no está vinculado a ningún insumo (solo venta monetaria).")
+            mensajes.append(f"ℹ️ {producto_nombre} no descuenta stock base.")
     
-    # 3. Extras
+    # Extras
     if tiene_cono:
         c.execute("UPDATE insumos SET cantidad = cantidad - ? WHERE nombre LIKE '%Cono%' OR nombre LIKE '%Barquillo%'", (cantidad_vendida,))
         mensajes.append(f"📉 Extra Cono: -{cantidad_vendida}")
@@ -89,6 +90,19 @@ def procesar_descuento_stock(producto_nombre, cantidad_vendida, tiene_cono, tien
     conn.commit()
     conn.close()
     return mensajes
+
+# --- LÓGICA DE MERMA (NUEVA) ---
+def registrar_merma_db(insumo_nom, cantidad, razon):
+    # 1. Guardar registro
+    run_query("INSERT INTO mermas (insumo_nombre, cantidad, razon, fecha) VALUES (?,?,?,?)", 
+              (insumo_nom, cantidad, razon, datetime.now()))
+    
+    # 2. Descontar del inventario físico (SIN tocar dinero)
+    conn = sqlite3.connect('heladeria_completa.db')
+    c = conn.cursor()
+    c.execute("UPDATE insumos SET cantidad = cantidad - ? WHERE nombre = ?", (cantidad, insumo_nom))
+    conn.commit()
+    conn.close()
 
 # --- PDF ---
 class PDF(FPDF):
@@ -125,22 +139,21 @@ def main():
     init_db()
     if 'logs' not in st.session_state: st.session_state.logs = []
 
-    st.sidebar.title("🍦 CRUD System")
-    opcion = st.sidebar.radio("Ir a:", ["🛒 Vender (Caja)", "📝 Productos (CRUD)", "📦 Insumos (CRUD)", "📊 Reportes & Eliminar"])
+    st.sidebar.title("🍦 Sistema Heladería")
+    # Agregamos "Registrar Merma" al menú
+    opcion = st.sidebar.radio("Ir a:", ["🛒 Vender (Caja)", "📉 Registrar Merma", "📦 Insumos (CRUD)", "📝 Productos (CRUD)", "📊 Reportes & Eliminar"])
 
     # -----------------------------------------------------------
-    # 1. CAJA Y VENTAS
+    # 1. CAJA Y VENTAS (Igual que antes)
     # -----------------------------------------------------------
     if opcion == "🛒 Vender (Caja)":
         st.header("Punto de Venta")
         
-        # Mostrar logs de transacciones anteriores
         if st.session_state.logs:
             for log in st.session_state.logs:
                 st.info(log)
             st.session_state.logs = [] # Limpiar
 
-        # Cargar productos
         df_menu = run_query("SELECT * FROM menu ORDER BY nombre", return_data=True)
         
         if not df_menu.empty:
@@ -149,11 +162,9 @@ def main():
             eleccion = c1.selectbox("Producto", lista_nombres)
             cantidad = c2.number_input("Cantidad", 1, 100, 1)
             
-            # Parsing
             nombre_real = eleccion.split(" | S/")[0]
             precio_real = float(eleccion.split(" | S/")[1])
             
-            # Extras
             col_x1, col_x2 = st.columns(2)
             add_top = col_x1.checkbox("Topping (+ S/1)")
             add_con = col_x2.checkbox("Cono Extra (+ S/1)")
@@ -175,17 +186,56 @@ def main():
                 st.session_state.logs = logs
                 st.session_state.logs.append(f"✅ Venta de {nombre_real} guardada.")
                 st.rerun()
-                
         else:
             st.warning("No hay productos. Ve a 'Productos (CRUD)' para crear uno.")
 
     # -----------------------------------------------------------
-    # 2. PRODUCTOS (CRUD COMPLETO)
+    # 2. REGISTRAR MERMA (NUEVA PESTAÑA AGREGADA)
+    # -----------------------------------------------------------
+    elif opcion == "📉 Registrar Merma":
+        st.header("Control de Mermas / Desperdicios")
+        
+        st.markdown("""
+        <div class="merma-box">
+            <b>⚠️ Módulo de Pérdidas:</b><br>
+            Usa esto si se cayó un helado, venció un producto o hubo un accidente.<br>
+            <i>Esto descontará el stock físico pero NO afectará el dinero de la caja.</i>
+        </div>
+        """, unsafe_allow_html=True)
+        st.divider()
+
+        df_ins = run_query("SELECT * FROM insumos ORDER BY nombre", return_data=True)
+        
+        if not df_ins.empty:
+            with st.form("form_merma", clear_on_submit=True):
+                c1, c2 = st.columns([2, 1])
+                insumo_sel = c1.selectbox("¿Qué se perdió?", df_ins['nombre'].unique())
+                cant_sel = c2.number_input("Cantidad perdida", min_value=0.1, step=1.0)
+                
+                razon = st.text_input("Razón (Obligatorio)", placeholder="Ej: Se cayó al piso, Vencimiento, Degustación...")
+                
+                if st.form_submit_button("🚨 REGISTRAR PÉRDIDA"):
+                    if razon:
+                        registrar_merma_db(insumo_sel, cant_sel, razon)
+                        st.error(f"Se descontaron {cant_sel} de {insumo_sel} del inventario.")
+                        st.rerun()
+                    else:
+                        st.warning("Debes escribir la razón de la pérdida.")
+            
+            # Historial de mermas
+            st.subheader("Historial de Mermas")
+            df_mermas = run_query("SELECT * FROM mermas ORDER BY id DESC", return_data=True)
+            st.dataframe(df_mermas, use_container_width=True)
+
+        else:
+            st.info("No hay insumos en el inventario para mermar.")
+
+    # -----------------------------------------------------------
+    # 3. PRODUCTOS (CRUD) - IGUAL QUE ANTES
     # -----------------------------------------------------------
     elif opcion == "📝 Productos (CRUD)":
-        st.header("Gestión de Productos (Menú)")
+        st.header("Gestión de Productos")
         
-        # --- A. CREAR PRODUCTO ---
         with st.expander("➕ Crear Nuevo Producto", expanded=True):
             with st.form("new_prod", clear_on_submit=True):
                 c1, c2, c3 = st.columns(3)
@@ -193,10 +243,8 @@ def main():
                 pre = c2.number_input("Precio", min_value=0.0)
                 cat = c3.selectbox("Categoría", ["Helado", "Paleta", "Bebida", "Otro/Consumible"])
                 
-                # OPCIÓN DE VINCULACIÓN
                 st.markdown("---")
-                st.write("⚙️ **Configuración de Inventario**")
-                vincular = st.checkbox("¿Este producto descuenta insumos del inventario?", value=True)
+                vincular = st.checkbox("¿Descuenta Inventario?", value=True)
                 
                 insumo_id = None
                 cant_gasto = 0
@@ -204,27 +252,22 @@ def main():
                 if vincular:
                     df_ins = run_query("SELECT * FROM insumos", return_data=True)
                     if not df_ins.empty:
-                        # Crear diccionario para mapear nombre -> id
                         mapa_insumos = {row['nombre']: row['id'] for i, row in df_ins.iterrows()}
-                        insumo_sel = st.selectbox("Selecciona qué insumo gasta:", list(mapa_insumos.keys()))
+                        insumo_sel = st.selectbox("Selecciona insumo:", list(mapa_insumos.keys()))
                         insumo_id = mapa_insumos[insumo_sel]
-                        cant_gasto = st.number_input("Cantidad que gasta por venta:", value=1.0)
+                        cant_gasto = st.number_input("Cantidad a descontar:", value=1.0)
                     else:
-                        st.error("No hay insumos creados. Ve a Insumos primero.")
+                        st.error("No hay insumos creados.")
                 
                 if st.form_submit_button("Guardar Producto"):
-                    # 1. Guardar Producto
                     pid = run_query("INSERT INTO menu (nombre, precio, categoria) VALUES (?,?,?)", (nom, pre, cat))
-                    
-                    # 2. Guardar Receta (Solo si marcó vincular)
                     if vincular and insumo_id:
                         run_query("INSERT INTO recetas (menu_id, insumo_id, cantidad_insumo) VALUES (?,?,?)", (pid, insumo_id, cant_gasto))
                         st.success(f"Producto '{nom}' creado y vinculado.")
                     else:
-                        st.success(f"Producto '{nom}' creado (Sin vínculo a inventario).")
+                        st.success(f"Producto '{nom}' creado (Sin inventario).")
                     st.rerun()
 
-        # --- B. VER Y ELIMINAR PRODUCTOS ---
         st.divider()
         st.subheader("Lista de Productos")
         
@@ -241,7 +284,6 @@ def main():
                 col1.write(f"ID: {row['id']}")
                 col2.write(f"**{row['nombre']}**")
                 col3.write(f"S/ {row['precio']}")
-                
                 receta_txt = f"Gasta: {row['Cantidad_Gasto']} de {row['Gasta_Insumo']}" if row['Gasta_Insumo'] else "No vinculado"
                 col4.caption(receta_txt)
                 
@@ -252,12 +294,11 @@ def main():
                 st.markdown("<hr style='margin: 5px 0'>", unsafe_allow_html=True)
 
     # -----------------------------------------------------------
-    # 3. INSUMOS (CRUD CON EDICIÓN DIRECTA)
+    # 4. INSUMOS (CRUD) - IGUAL QUE ANTES (Data Editor)
     # -----------------------------------------------------------
     elif opcion == "📦 Insumos (CRUD)":
         st.header("Gestión de Inventario")
         
-        # A. AGREGAR
         with st.expander("➕ Nuevo Insumo"):
             with st.form("add_ins", clear_on_submit=True):
                 c1, c2, c3, c4 = st.columns(4)
@@ -269,18 +310,14 @@ def main():
                     run_query("INSERT INTO insumos (nombre, cantidad, unidad, minimo) VALUES (?,?,?,?)", (n, q, u, m))
                     st.rerun()
         
-        # B. TABLA EDITABLE (CRUD PODEROSO)
-        st.subheader("Inventario (Edita directamente en la tabla)")
-        st.info("💡 Haz doble clic en una celda para editar el stock o el nombre. Se guarda automático.")
-        
+        st.subheader("Inventario (Edita directo en la tabla)")
         df_ins = run_query("SELECT * FROM insumos ORDER BY id", return_data=True)
         
-        # Usamos st.data_editor para permitir cambios masivos y rápidos
         edited_df = st.data_editor(
             df_ins,
             column_config={
                 "id": st.column_config.NumberColumn(disabled=True),
-                "cantidad": st.column_config.NumberColumn("Stock Actual (Editar aquí)", min_value=0, format="%.1f"),
+                "cantidad": st.column_config.NumberColumn("Stock Actual", min_value=0, format="%.1f"),
                 "minimo": st.column_config.NumberColumn("Alerta Mínima", min_value=0),
             },
             hide_index=True,
@@ -288,19 +325,12 @@ def main():
             key="editor_insumos"
         )
         
-        # DETECTAR CAMBIOS Y GUARDAR
-        # Comparamos el dataframe original con el editado
         if not df_ins.equals(edited_df):
-            # Iteramos para encontrar diferencias y actualizar BD
-            # Esta es una forma simplificada de guardar cambios del data_editor
             for index, row in edited_df.iterrows():
-                id_insumo = row['id']
-                # Actualizamos todo por seguridad
                 run_query("UPDATE insumos SET nombre=?, cantidad=?, unidad=?, minimo=? WHERE id=?", 
-                          (row['nombre'], row['cantidad'], row['unidad'], row['minimo'], id_insumo))
-            st.toast("✅ Inventario actualizado correctamente.")
+                          (row['nombre'], row['cantidad'], row['unidad'], row['minimo'], row['id']))
+            st.toast("✅ Inventario actualizado.")
             
-        # BOTONES DE ELIMINAR (Fuera de la tabla editable)
         st.markdown("##### Eliminar Insumos")
         with st.expander("Ver opciones de borrado"):
             for i, row in df_ins.iterrows():
@@ -311,7 +341,7 @@ def main():
                     st.rerun()
 
     # -----------------------------------------------------------
-    # 4. REPORTES Y ELIMINAR VENTAS
+    # 5. REPORTES - IGUAL QUE ANTES
     # -----------------------------------------------------------
     elif opcion == "📊 Reportes & Eliminar":
         st.header("Reporte de Ventas")
@@ -323,23 +353,17 @@ def main():
             df_ventas['fecha'] = pd.to_datetime(df_ventas['fecha'])
             ventas_hoy = df_ventas[df_ventas['fecha'].dt.date == hoy]
             
-            # Métricas
             t = ventas_hoy['total'].sum()
             col1, col2 = st.columns(2)
             col1.metric("Total Hoy", f"S/ {t:,.2f}")
             col2.metric("Ventas Hoy", len(ventas_hoy))
             
             st.divider()
-            st.subheader("Historial de Hoy (Opción de Borrar)")
+            st.subheader("Transacciones (Opción de Borrar)")
             
-            # Tabla manual para poner botón de borrar
-            # Header
+            # Encabezados
             c1, c2, c3, c4, c5 = st.columns([1, 3, 1, 2, 1])
-            c1.write("**Hora**")
-            c2.write("**Producto**")
-            c3.write("**Cant**")
-            c4.write("**Total**")
-            c5.write("**Acción**")
+            c1.write("Hora"); c2.write("Producto"); c3.write("Cant"); c4.write("Total"); c5.write("Acción")
             
             for i, row in ventas_hoy.iterrows():
                 c1, c2, c3, c4, c5 = st.columns([1, 3, 1, 2, 1])
@@ -349,22 +373,15 @@ def main():
                 c4.write(f"S/ {row['total']:.2f}")
                 
                 if c5.button("❌", key=f"del_venta_{row['id']}"):
-                    # Al borrar venta, ¿Regresamos el stock? 
-                    # Generalmente NO en restaurantes porque el helado ya se sirvió (merma),
-                    # pero si fue error de dedo, sí.
-                    # Por simplicidad, aquí solo borramos el registro de dinero.
                     run_query("DELETE FROM ventas WHERE id=?", (row['id'],))
-                    st.success("Venta eliminada del reporte.")
                     st.rerun()
             
             st.divider()
-            
-            # Descargas
             try:
                 pdf = generar_pdf(ventas_hoy, t, str(hoy))
                 st.download_button("📄 PDF Reporte", pdf, f"Reporte_{hoy}.pdf")
             except:
-                pass
+                st.error("Librería FPDF no instalada o error generando PDF.")
                 
         else:
             st.info("No hay ventas.")
