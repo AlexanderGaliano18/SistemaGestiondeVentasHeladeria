@@ -16,10 +16,10 @@ def get_hora_peru():
 # --- ESTILOS ---
 st.markdown("""
 <style>
-    /* Métricas: Fondo semitransparente adaptable */
+    /* Métricas y Contenedores */
     .stMetric { background-color: rgba(128, 128, 128, 0.1); border: 1px solid rgba(128, 128, 128, 0.2); padding: 10px; border-radius: 5px; }
     
-    /* Cajas de colores con transparencia */
+    /* Cajas de Colores (Transparencia para Modo Oscuro) */
     .merma-box { background-color: rgba(255, 75, 75, 0.1); border-left: 5px solid #ff4b4b; padding: 15px; border-radius: 5px; }
     .compra-box { background-color: rgba(40, 167, 69, 0.1); border-left: 5px solid #28a745; padding: 15px; border-radius: 5px; }
     .cierre-box { background-color: rgba(255, 193, 7, 0.1); border-left: 5px solid #ffc107; padding: 15px; border-radius: 5px; }
@@ -27,7 +27,7 @@ st.markdown("""
     /* Total Display */
     .total-display { font-size: 26px; font-weight: bold; text-align: right; padding: 10px; border-top: 1px solid rgba(128, 128, 128, 0.2); }
     
-    /* Tabs transparentes */
+    /* Tabs */
     .stTabs [data-baseweb="tab-list"] { gap: 10px; }
     .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: rgba(128, 128, 128, 0.1); border-radius: 4px 4px 0 0; gap: 1px; padding-top: 10px; padding-bottom: 10px; }
     .stTabs [aria-selected="true"] { background-color: rgba(128, 128, 128, 0.05); border-bottom: 2px solid #1565c0; }
@@ -36,7 +36,7 @@ st.markdown("""
 
 # --- BASE DE DATOS ---
 def init_db():
-    conn = sqlite3.connect('heladeria_final_master.db')
+    conn = sqlite3.connect('heladeria_v7_final.db')
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS menu (id INTEGER PRIMARY KEY, nombre TEXT, precio REAL, categoria TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS insumos (id INTEGER PRIMARY KEY, nombre TEXT, cantidad REAL, unidad TEXT, minimo REAL DEFAULT 10)''')
@@ -49,7 +49,7 @@ def init_db():
     conn.close()
 
 def run_query(query, params=(), return_data=False):
-    conn = sqlite3.connect('heladeria_final_master.db')
+    conn = sqlite3.connect('heladeria_v7_final.db')
     c = conn.cursor()
     try:
         c.execute(query, params)
@@ -87,7 +87,7 @@ def log_movimiento(insumo, cantidad, tipo, razon):
 # --- PROCESAR VENTA ---
 def procesar_descuento_stock(producto_nombre, cantidad_vendida, cant_conos_extra, cant_toppings):
     mensajes = []
-    conn = sqlite3.connect('heladeria_final_master.db')
+    conn = sqlite3.connect('heladeria_v7_final.db')
     c = conn.cursor()
     ahora = get_hora_peru()
     
@@ -299,10 +299,7 @@ def main():
             
             if st.button("🔒 CERRAR CAJA AHORA", type="primary"):
                 if responsable:
-                    # Guardar cierre
                     cerrar_turno_db(total_turno, responsable)
-                    
-                    # PDF
                     try:
                         ahora_str = get_hora_peru().strftime('%d-%m-%Y %H:%M')
                         pdf = generar_pdf(df_turno, total_turno, ahora_str, f"Cierre - {responsable}")
@@ -313,9 +310,21 @@ def main():
                 else:
                     st.warning("Escribe nombre responsable.")
         
+        # --- AQUÍ AGREGUÉ LA OPCIÓN DE ELIMINAR ---
         if not df_turno.empty:
-            with st.expander("Ver detalle"):
-                st.dataframe(df_turno)
+            st.divider()
+            with st.expander("📝 Gestionar / Eliminar Ventas del Turno Actual"):
+                st.caption("Si te equivocaste al cobrar, puedes borrar la venta aquí antes de cerrar.")
+                for i, row in df_turno.iterrows():
+                    cols = st.columns([1, 3, 2, 2, 1])
+                    cols[0].write(row['fecha'].strftime('%H:%M'))
+                    cols[1].write(f"{row['producto_nombre']}")
+                    cols[2].write(f"Cant: {row['cantidad']}")
+                    cols[3].write(f"S/ {row['total']:.2f}")
+                    if cols[4].button("❌", key=f"del_v_t_{row['id']}"):
+                        run_query("DELETE FROM ventas WHERE id=?", (row['id'],))
+                        st.warning("Venta eliminada.")
+                        st.rerun()
 
     # -----------------------------------------------------------
     # 3. INVENTARIO
@@ -363,8 +372,9 @@ def main():
                     t_dato = st.radio("Medida", ["Unidades", "Decimales"], horizontal=True)
                     step = 1.0 if "Unidades" in t_dato else 0.1
                     fmt = "%d" if "Unidades" in t_dato else "%.2f"
+                    min_val = 1.0 if "Unidades" in t_dato else 0.0
                     
-                    q = c3.number_input("Cant", step=step, format=fmt)
+                    q = c3.number_input("Cant", step=step, format=fmt, min_value=min_val)
                     m = c4.number_input("Min", 5.0)
                     if st.form_submit_button("Crear"):
                         run_query("INSERT INTO insumos (nombre, cantidad, unidad, minimo) VALUES (?,?,?,?)", (n, q, u, m))
@@ -471,14 +481,24 @@ def main():
                 
                 buff = io.BytesIO()
                 
-                # CORRECCIÓN EXCEL: Convertir fecha timezone-aware a texto para que Excel no falle
+                # Excel Fix
                 v_hoy_excel = v_hoy.copy()
                 v_hoy_excel['fecha'] = v_hoy_excel['fecha'].astype(str)
-                
                 with pd.ExcelWriter(buff, engine='openpyxl') as w: v_hoy_excel.to_excel(w, index=False)
                 c2.download_button("Excel Día", buff.getvalue(), f"Dia_{hoy}.xlsx")
                 
-                st.dataframe(v_hoy)
+                # --- BOTÓN PARA ELIMINAR VENTAS ANTIGUAS ---
+                with st.expander("🛠️ Gestionar / Eliminar Ventas Históricas"):
+                    st.caption("Si necesitas borrar una venta antigua por error.")
+                    for i, r in v_hoy.iterrows():
+                        cols = st.columns([1, 3, 2, 2, 1])
+                        cols[0].write(r['fecha'].strftime('%H:%M'))
+                        cols[1].write(r['producto_nombre'])
+                        cols[2].write(f"Cant: {r['cantidad']}")
+                        cols[3].write(f"S/ {r['total']:.2f}")
+                        if cols[4].button("❌", key=f"del_h_{r['id']}"):
+                            run_query("DELETE FROM ventas WHERE id=?", (r['id'],))
+                            st.rerun()
         
         with tab_cierres:
             st.write("Registro de turnos cerrados")
