@@ -7,38 +7,115 @@ from fpdf import FPDF
 import pytz
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Sistema Heladería Master", layout="wide", page_icon="🍦")
+st.set_page_config(page_title="Neverita - Sistema POS", layout="wide", page_icon="🍦")
 
-# --- NOMBRE DE LA BD (V12 con restauración de stock) ---
-DB_NAME = 'heladeria_v12_restore.db'
+# --- NOMBRE DE LA BD ---
+DB_NAME = 'heladeria_final_v11.db'
 
 # --- HORA PERÚ ---
 def get_hora_peru():
     return datetime.now(pytz.timezone('America/Lima'))
 
-# --- ESTILOS ---
+# --- ESTILOS PREMIUM (GLASSMORPHISM & UI MODERNA) ---
 st.markdown("""
 <style>
-    /* Métricas */
-    .stMetric { background-color: rgba(128, 128, 128, 0.1); border: 1px solid rgba(128, 128, 128, 0.2); padding: 10px; border-radius: 5px; }
+    /* Importar fuente moderna */
+    @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;600;700&display=swap');
     
-    /* Alertas */
-    .alert-critico { background-color: rgba(255, 0, 0, 0.15); border-left: 5px solid #ff0000; padding: 10px; border-radius: 5px; color: #ff4b4b; font-weight: bold; margin-bottom: 5px;}
-    .alert-bajo { background-color: rgba(255, 193, 7, 0.15); border-left: 5px solid #ffc107; padding: 10px; border-radius: 5px; color: #d39e00; font-weight: bold; margin-bottom: 5px;}
+    html, body, [class*="css"]  {
+        font-family: 'Nunito', sans-serif;
+    }
+
+    /* Tarjetas de Métricas Flotantes */
+    div[data-testid="stMetric"] {
+        background: rgba(135, 206, 235, 0.05);
+        border: 1px solid rgba(135, 206, 235, 0.2);
+        padding: 15px;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        transition: all 0.3s ease-in-out;
+    }
+    div[data-testid="stMetric"]:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+        border-color: rgba(135, 206, 235, 0.5);
+    }
+
+    /* Botones Modernos */
+    div.stButton > button {
+        border-radius: 8px;
+        transition: all 0.3s ease;
+        font-weight: 600;
+        border: 1px solid rgba(128, 128, 128, 0.2);
+    }
+    div.stButton > button:hover {
+        transform: scale(1.02);
+        box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+    }
     
-    /* Cajas */
-    .merma-box { background-color: rgba(255, 75, 75, 0.1); border-left: 5px solid #ff4b4b; padding: 15px; border-radius: 5px; }
-    .gasto-box { background-color: rgba(255, 159, 67, 0.1); border-left: 5px solid #ff9f43; padding: 15px; border-radius: 5px; }
-    .compra-box { background-color: rgba(40, 167, 69, 0.1); border-left: 5px solid #28a745; padding: 15px; border-radius: 5px; }
-    .cierre-box { background-color: rgba(255, 193, 7, 0.1); border-left: 5px solid #ffc107; padding: 15px; border-radius: 5px; }
-    .respaldo-box { background-color: rgba(23, 162, 184, 0.1); border: 1px solid #17a2b8; padding: 15px; border-radius: 5px; }
+    /* Botón Primario (Cobrar, Cerrar, etc) con Gradiente 'Ice Cream' */
+    div.stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #74b9ff, #0984e3);
+        color: white;
+        border: none;
+        box-shadow: 0 4px 15px rgba(9, 132, 227, 0.3);
+    }
+    div.stButton > button[kind="primary"]:hover {
+        background: linear-gradient(135deg, #0984e3, #74b9ff);
+        box-shadow: 0 6px 20px rgba(9, 132, 227, 0.5);
+    }
+
+    /* Producto Estrella Especial */
+    .star-product {
+        background: linear-gradient(135deg, rgba(255, 219, 88, 0.1), rgba(255, 193, 7, 0.2));
+        border: 1px solid rgba(255, 193, 7, 0.4);
+        padding: 20px;
+        border-radius: 15px;
+        text-align: center;
+        transition: transform 0.3s;
+        box-shadow: 0 4px 10px rgba(255, 193, 7, 0.1);
+    }
+    .star-product:hover {
+        transform: scale(1.03);
+    }
+
+    /* Cajas de Alerta y Formularios (Glassmorphism) */
+    .alert-critico { background-color: rgba(255, 75, 75, 0.15); border-left: 6px solid #ff4b4b; padding: 12px; border-radius: 8px; color: #ff4b4b; font-weight: bold; margin-bottom: 8px;}
+    .alert-bajo { background-color: rgba(255, 193, 7, 0.15); border-left: 6px solid #ffc107; padding: 12px; border-radius: 8px; color: #d39e00; font-weight: bold; margin-bottom: 8px;}
     
-    .total-display { font-size: 26px; font-weight: bold; text-align: right; padding: 10px; border-top: 1px solid rgba(128, 128, 128, 0.2); }
+    .merma-box { background: rgba(255, 75, 75, 0.05); border-left: 6px solid #ff4b4b; padding: 15px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);}
+    .gasto-box { background: rgba(255, 159, 67, 0.05); border-left: 6px solid #ff9f43; padding: 15px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);}
+    .compra-box { background: rgba(40, 167, 69, 0.05); border-left: 6px solid #28a745; padding: 15px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);}
+    .cierre-box { background: rgba(255, 193, 7, 0.05); border-left: 6px solid #ffc107; padding: 15px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);}
+    .respaldo-box { background: rgba(23, 162, 184, 0.05); border-left: 6px solid #17a2b8; padding: 15px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.02);}
     
-    /* Tabs */
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-    .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: rgba(128, 128, 128, 0.1); border-radius: 4px 4px 0 0; gap: 1px; padding-top: 10px; padding-bottom: 10px; }
-    .stTabs [aria-selected="true"] { background-color: rgba(128, 128, 128, 0.05); border-bottom: 2px solid #1565c0; }
+    /* Total a Cobrar (Estilo Ticket) */
+    .total-display { 
+        font-size: 32px; 
+        font-weight: 800; 
+        text-align: right; 
+        padding: 15px; 
+        background: rgba(9, 132, 227, 0.05);
+        border-radius: 10px;
+        border: 2px dashed rgba(9, 132, 227, 0.4);
+        color: #0984e3;
+    }
+    
+    /* Tabs Modernos */
+    .stTabs [data-baseweb="tab-list"] { gap: 15px; padding-bottom: 5px;}
+    .stTabs [data-baseweb="tab"] { 
+        height: 45px; 
+        border-radius: 8px; 
+        background-color: rgba(128, 128, 128, 0.05); 
+        border: 1px solid transparent; 
+        padding: 10px 20px; 
+        transition: all 0.3s;
+    }
+    .stTabs [data-baseweb="tab"]:hover { background-color: rgba(116, 185, 255, 0.1); border-color: rgba(116, 185, 255, 0.3); }
+    .stTabs [aria-selected="true"] { 
+        background-color: rgba(116, 185, 255, 0.15) !important; 
+        border-bottom: 3px solid #0984e3 !important; 
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -46,33 +123,23 @@ st.markdown("""
 def init_and_migrate_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    
-    # Tablas base
     c.execute('''CREATE TABLE IF NOT EXISTS menu (id INTEGER PRIMARY KEY, nombre TEXT, precio REAL, categoria TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS insumos (id INTEGER PRIMARY KEY, nombre TEXT, cantidad REAL, unidad TEXT, minimo REAL DEFAULT 10)''')
     c.execute('''CREATE TABLE IF NOT EXISTS recetas (id INTEGER PRIMARY KEY, menu_id INTEGER, insumo_id INTEGER, cantidad_insumo REAL)''')
-    
-    # VENTAS ACTUALIZADA: Ahora guarda cant_toppings y cant_conos para poder devolverlos
     c.execute('''CREATE TABLE IF NOT EXISTS ventas (id INTEGER PRIMARY KEY, producto_nombre TEXT, precio_base REAL, cantidad INTEGER, extras REAL, total REAL, metodo_pago TEXT, fecha TIMESTAMP, cant_toppings INTEGER DEFAULT 0, cant_conos INTEGER DEFAULT 0)''')
-    
     c.execute('''CREATE TABLE IF NOT EXISTS mermas (id INTEGER PRIMARY KEY, insumo_nombre TEXT, cantidad REAL, razon TEXT, fecha TIMESTAMP)''')
     c.execute('''CREATE TABLE IF NOT EXISTS movimientos (id INTEGER PRIMARY KEY, insumo_nombre TEXT, cantidad REAL, tipo TEXT, razon TEXT, fecha TIMESTAMP)''')
     c.execute('''CREATE TABLE IF NOT EXISTS cierres (id INTEGER PRIMARY KEY, fecha_cierre TIMESTAMP, total_turno REAL, responsable TEXT, tipo_cierre TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS reportes_pdf (id INTEGER PRIMARY KEY, fecha TIMESTAMP, nombre_archivo TEXT, pdf_data BLOB)''')
     c.execute('''CREATE TABLE IF NOT EXISTS gastos (id INTEGER PRIMARY KEY, razon TEXT, monto REAL, metodo_pago TEXT, fecha TIMESTAMP)''')
     
-    # --- MIGRACIONES PARA BASES DE DATOS ANTIGUAS ---
-    try:
-        c.execute("SELECT cant_toppings FROM ventas LIMIT 1")
+    try: c.execute("SELECT cant_toppings FROM ventas LIMIT 1")
     except:
-        # Si falla, agregamos las columnas nuevas
         c.execute("ALTER TABLE ventas ADD COLUMN cant_toppings INTEGER DEFAULT 0")
         c.execute("ALTER TABLE ventas ADD COLUMN cant_conos INTEGER DEFAULT 0")
     
-    try:
-        c.execute("SELECT tipo_cierre FROM cierres LIMIT 1")
-    except:
-        c.execute("ALTER TABLE cierres ADD COLUMN tipo_cierre TEXT")
+    try: c.execute("SELECT tipo_cierre FROM cierres LIMIT 1")
+    except: c.execute("ALTER TABLE cierres ADD COLUMN tipo_cierre TEXT")
 
     conn.commit()
     conn.close()
@@ -99,8 +166,7 @@ def run_query(query, params=(), return_data=False):
 # --- FUNCIONES LÓGICAS ---
 def get_ultimo_cierre():
     df = run_query("SELECT fecha_cierre FROM cierres ORDER BY id DESC LIMIT 1", return_data=True)
-    if not df.empty:
-        return pd.to_datetime(df.iloc[0]['fecha_cierre']).tz_convert('America/Lima')
+    if not df.empty: return pd.to_datetime(df.iloc[0]['fecha_cierre']).tz_convert('America/Lima')
     return None
 
 def cerrar_turno_db(total, responsable, tipo):
@@ -124,10 +190,8 @@ def obtener_alertas_stock():
         for _, row in df.iterrows():
             stock = row['cantidad']
             minimo = row['minimo']
-            if stock <= (minimo / 2):
-                alertas_html += f"<div class='alert-critico'>🚨 CRÍTICO: {row['nombre']} ({stock} {row['unidad']})</div>"
-            elif stock <= minimo:
-                alertas_html += f"<div class='alert-bajo'>⚠️ BAJO: {row['nombre']} ({stock} {row['unidad']})</div>"
+            if stock <= (minimo / 2): alertas_html += f"<div class='alert-critico'>🚨 CRÍTICO: {row['nombre']} ({stock} {row['unidad']})</div>"
+            elif stock <= minimo: alertas_html += f"<div class='alert-bajo'>⚠️ BAJO: {row['nombre']} ({stock} {row['unidad']})</div>"
     return alertas_html
 
 def obtener_producto_estrella():
@@ -138,19 +202,14 @@ def obtener_producto_estrella():
         v_hoy = df[df['fecha'].dt.date == hoy]
         if not v_hoy.empty:
             top = v_hoy.groupby('producto_nombre')['cantidad'].sum().sort_values(ascending=False).head(1)
-            if not top.empty:
-                return top.index[0], int(top.values[0])
+            if not top.empty: return top.index[0], int(top.values[0])
     return None, 0
 
-# --- LÓGICA DE INVENTARIO (DESCONTAR Y RESTAURAR) ---
-
+# --- LÓGICA DE INVENTARIO ---
 def procesar_descuento_stock(producto_nombre, cantidad_vendida, cant_conos_extra, cant_toppings):
-    # Esta función DESCUENTA del inventario al vender
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     ahora = get_hora_peru()
-    
-    # 1. Receta Base
     c.execute("SELECT id FROM menu WHERE nombre = ?", (producto_nombre,))
     res_prod = c.fetchone()
     if res_prod:
@@ -163,7 +222,6 @@ def procesar_descuento_stock(producto_nombre, cantidad_vendida, cant_conos_extra
             c.execute("INSERT INTO movimientos (insumo_nombre, cantidad, tipo, razon, fecha) VALUES (?,?,?,?,?)",
                       (nom_insumo, total_bajar, 'SALIDA', f'Venta: {producto_nombre}', ahora))
 
-    # 2. Extras
     if cant_conos_extra > 0:
         c.execute("SELECT id, nombre FROM insumos WHERE nombre LIKE '%Cono%' OR nombre LIKE '%Barquillo%' LIMIT 1")
         res_cono = c.fetchone()
@@ -179,26 +237,17 @@ def procesar_descuento_stock(producto_nombre, cantidad_vendida, cant_conos_extra
             c.execute("UPDATE insumos SET cantidad = cantidad - ? WHERE id = ?", (cant_toppings, res_top[0]))
             c.execute("INSERT INTO movimientos (insumo_nombre, cantidad, tipo, razon, fecha) VALUES (?,?,?,?,?)",
                       (res_top[1], cant_toppings, 'SALIDA', 'Venta: Topping Extra', ahora))
-
     conn.commit()
     conn.close()
 
 def revertir_stock_por_eliminacion(venta_id):
-    """
-    Restaura el stock cuando se elimina una venta.
-    """
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     ahora = get_hora_peru()
-    
-    # 1. Obtener datos de la venta a eliminar
     c.execute("SELECT producto_nombre, cantidad, cant_toppings, cant_conos FROM ventas WHERE id = ?", (venta_id,))
     venta = c.fetchone()
-    
     if venta:
         prod_nombre, cant_vendida, c_tops, c_conos = venta
-        
-        # 2. Restaurar Receta Base
         c.execute("SELECT id FROM menu WHERE nombre = ?", (prod_nombre,))
         res_prod = c.fetchone()
         if res_prod:
@@ -208,11 +257,8 @@ def revertir_stock_por_eliminacion(venta_id):
             for insumo_id, cant_receta, nom_insumo in ingredientes:
                 total_subir = cant_receta * cant_vendida
                 c.execute("UPDATE insumos SET cantidad = cantidad + ? WHERE id = ?", (total_subir, insumo_id))
-                # Log en verde (Devolución)
                 c.execute("INSERT INTO movimientos (insumo_nombre, cantidad, tipo, razon, fecha) VALUES (?,?,?,?,?)",
-                          (nom_insumo, total_subir, 'DEVOLUCIÓN', f'Anulación Venta: {prod_nombre}', ahora))
-        
-        # 3. Restaurar Extras (Si existen columnas y valores)
+                          (nom_insumo, total_subir, 'DEVOLUCIÓN', f'Anulación: {prod_nombre}', ahora))
         if c_conos and c_conos > 0:
             c.execute("SELECT id, nombre FROM insumos WHERE nombre LIKE '%Cono%' OR nombre LIKE '%Barquillo%' LIMIT 1")
             res_cono = c.fetchone()
@@ -220,7 +266,6 @@ def revertir_stock_por_eliminacion(venta_id):
                 c.execute("UPDATE insumos SET cantidad = cantidad + ? WHERE id = ?", (c_conos, res_cono[0]))
                 c.execute("INSERT INTO movimientos (insumo_nombre, cantidad, tipo, razon, fecha) VALUES (?,?,?,?,?)",
                           (res_cono[1], c_conos, 'DEVOLUCIÓN', 'Anulación: Cono Extra', ahora))
-
         if c_tops and c_tops > 0:
             c.execute("SELECT id, nombre FROM insumos WHERE nombre LIKE '%Topping%' LIMIT 1")
             res_top = c.fetchone()
@@ -228,7 +273,6 @@ def revertir_stock_por_eliminacion(venta_id):
                 c.execute("UPDATE insumos SET cantidad = cantidad + ? WHERE id = ?", (c_tops, res_top[0]))
                 c.execute("INSERT INTO movimientos (insumo_nombre, cantidad, tipo, razon, fecha) VALUES (?,?,?,?,?)",
                           (res_top[1], c_tops, 'DEVOLUCIÓN', 'Anulación: Topping Extra', ahora))
-
     conn.commit()
     conn.close()
 
@@ -245,7 +289,6 @@ def generar_pdf(df_ventas, total_ventas, fecha, titulo="Reporte", total_gastos=0
     pdf.set_font("Arial", size=10)
     pdf.cell(0, 10, txt=f"{titulo} - {fecha}", ln=1)
     
-    # TABLA VENTAS
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(0, 10, "Detalle de Ventas", 0, 1)
     
@@ -259,14 +302,12 @@ def generar_pdf(df_ventas, total_ventas, fecha, titulo="Reporte", total_gastos=0
     pdf.cell(30, 8, "Metodo", 1, 1, 'C', 1)
     
     pdf.set_font("Arial", size=8)
-    
     total_efectivo = 0
     total_yape = 0
     
     for _, row in df_ventas.iterrows():
         try: hora = row['fecha'].strftime('%H:%M')
         except: hora = str(row['fecha'])[-8:-3]
-        
         if "Efectivo" in row['metodo_pago']: total_efectivo += row['total']
         else: total_yape += row['total']
 
@@ -278,8 +319,6 @@ def generar_pdf(df_ventas, total_ventas, fecha, titulo="Reporte", total_gastos=0
         pdf.cell(30, 8, row['metodo_pago'], 1, 1, 'C')
         
     pdf.ln(10)
-    
-    # RESUMEN
     pdf.set_font("Arial", 'B', 11)
     pdf.cell(0, 10, "Resumen Financiero", 0, 1)
     pdf.set_font("Arial", '', 10)
@@ -292,7 +331,7 @@ def generar_pdf(df_ventas, total_ventas, fecha, titulo="Reporte", total_gastos=0
     pdf.cell(40, 10, f"S/ {(total_ventas - total_gastos):,.2f}", 1, 1, 'R')
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 10)
-    pdf.cell(0, 10, "Metodos de Pago", 0, 1)
+    pdf.cell(0, 10, "Metodos de Pago (Ingresos Brutos)", 0, 1)
     pdf.set_font("Arial", '', 10)
     pdf.cell(70, 8, f"Efectivo: S/ {total_efectivo:,.2f}", 1, 1)
     pdf.cell(70, 8, f"Yape/Plin: S/ {total_yape:,.2f}", 1, 1)
@@ -310,8 +349,7 @@ def main():
     except: st.sidebar.warning("Falta logo")
 
     st.sidebar.title("Menú Principal")
-    
-    opcion = st.sidebar.radio("Ir a:", [
+    opcion = st.sidebar.radio("Navegación:", [
         "🛒 Caja (Vender)", 
         "💸 Registrar Gastos",
         "🔒 Cierre de Caja", 
@@ -328,28 +366,24 @@ def main():
     if opcion == "🛒 Caja (Vender)":
         st.header("Punto de Venta")
         
-        # Dashboard
         col_alerts, col_star = st.columns([2, 1])
         with col_alerts:
             html_alerts = obtener_alertas_stock()
             if html_alerts: st.markdown(html_alerts, unsafe_allow_html=True)
-            else: st.success("✅ Inventario Saludable")
+            else: st.success("✅ Todo tu inventario está en niveles óptimos.")
         with col_star:
             nom, cant = obtener_producto_estrella()
-            if nom: st.markdown(f"<div class='star-product'>🏆 <b>Top Ventas:</b><br>{nom} ({cant})</div>", unsafe_allow_html=True)
+            if nom: st.markdown(f"<div class='star-product'>🏆 <b>Producto Estrella:</b><br><span style='font-size:1.3em;'>{nom}</span><br>({cant} unidades hoy)</div>", unsafe_allow_html=True)
         
         st.divider()
         
         ultimo_cierre = get_ultimo_cierre()
         df_todas = run_query("SELECT * FROM ventas", return_data=True)
         total_turno_actual = 0.0
-        
         if not df_todas.empty:
             df_todas['fecha'] = pd.to_datetime(df_todas['fecha']).dt.tz_convert('America/Lima')
-            if ultimo_cierre:
-                df_turno = df_todas[df_todas['fecha'] > ultimo_cierre]
-            else:
-                df_turno = df_todas
+            if ultimo_cierre: df_turno = df_todas[df_todas['fecha'] > ultimo_cierre]
+            else: df_turno = df_todas
             total_turno_actual = df_turno['total'].sum()
         
         st.metric("💰 Dinero en Caja (Corte Actual)", f"S/ {total_turno_actual:,.2f}")
@@ -359,83 +393,80 @@ def main():
         if not df_menu.empty:
             c1, c2, c3 = st.columns([3, 1, 1])
             opciones = [f"{row['nombre']} | S/{row['precio']}" for i, row in df_menu.iterrows()]
-            seleccion = c1.selectbox("Producto", opciones)
+            seleccion = c1.selectbox("Seleccionar Producto", opciones)
             cantidad = c2.number_input("Cantidad", 1, 50, 1)
             
             nombre_prod = seleccion.split(" | S/")[0]
             precio_base = float(seleccion.split(" | S/")[1])
             
             cx1, cx2 = st.columns(2)
-            n_toppings = cx1.number_input("¿Cuántos con Topping?", 0, cantidad * 5, 0)
-            n_conos = cx2.number_input("¿Cuántos con Cono Extra?", 0, cantidad * 5, 0)
+            n_toppings = cx1.number_input("¿Cuántos llevan Topping? (+S/1)", 0, cantidad * 5, 0)
+            n_conos = cx2.number_input("¿Cuántos llevan Cono Extra? (+S/1)", 0, cantidad * 5, 0)
             
             subtotal = (precio_base * cantidad) + (n_toppings * 1.0) + (n_conos * 1.0)
-            c3.metric("Subtotal", f"S/ {subtotal:.2f}")
+            c3.metric("Subtotal Venta", f"S/ {subtotal:.2f}")
             
             if st.button("➕ Agregar al Carrito"):
                 st.session_state.carrito.append({
                     "producto": nombre_prod, "precio_base": precio_base, "cantidad": cantidad,
                     "cant_toppings": n_toppings, "cant_conos": n_conos, "extras_costo": (n_toppings+n_conos), "subtotal": subtotal
                 })
-                st.toast("Agregado")
+                st.toast("Producto Agregado")
 
         st.divider()
         if len(st.session_state.carrito) > 0:
-            st.write("### 🛒 Carrito")
+            st.write("### 🛒 Carrito de Compras")
             df_c = pd.DataFrame(st.session_state.carrito)
             st.dataframe(df_c[['cantidad', 'producto', 'cant_toppings', 'cant_conos', 'subtotal']], use_container_width=True)
             
             total_g = sum(x['subtotal'] for x in st.session_state.carrito)
             c_tot, c_pay = st.columns([2, 1])
-            c_tot.markdown(f"<div class='total-display'>TOTAL: S/ {total_g:.2f}</div>", unsafe_allow_html=True)
+            c_tot.markdown(f"<div class='total-display'>TOTAL A COBRAR: S/ {total_g:.2f}</div>", unsafe_allow_html=True)
             
             with c_pay:
-                metodo = st.radio("Pago", ["Efectivo", "Yape", "Tarjeta"], horizontal=True)
-                if st.button("✅ COBRAR", type="primary", use_container_width=True):
+                metodo = st.radio("Método de Pago", ["Efectivo", "Yape", "Tarjeta"], horizontal=True)
+                if st.button("✅ FINALIZAR Y COBRAR", type="primary", use_container_width=True):
                     hora = get_hora_peru()
                     for item in st.session_state.carrito:
-                        # GUARDAR VENTA CON LOS DETALLES DE EXTRAS PARA PODER RESTAURAR DESPUÉS
                         run_query("""INSERT INTO ventas 
                                      (producto_nombre, precio_base, cantidad, extras, total, metodo_pago, fecha, cant_toppings, cant_conos) 
                                      VALUES (?,?,?,?,?,?,?,?,?)""",
                                   (item['producto'], item['precio_base'], item['cantidad'], item['extras_costo'], item['subtotal'], metodo, hora, item['cant_toppings'], item['cant_conos']))
-                        
                         procesar_descuento_stock(item['producto'], item['cantidad'], item['cant_conos'], item['cant_toppings'])
                     
                     st.session_state.carrito = []
-                    st.success("Venta registrada")
+                    st.success("¡Venta Exitosa!")
                     st.rerun()
             
-            if st.button("Vaciar Lista"):
+            if st.button("🗑️ Vaciar Carrito"):
                 st.session_state.carrito = []
                 st.rerun()
 
     # -----------------------------------------------------------
-    # NUEVO: REGISTRAR GASTOS
+    # REGISTRAR GASTOS
     # -----------------------------------------------------------
     elif opcion == "💸 Registrar Gastos":
         st.header("Control de Gastos")
-        st.markdown("""<div class="gasto-box">Salida de dinero de la caja.</div>""", unsafe_allow_html=True)
-        st.divider()
+        st.markdown("""<div class="gasto-box">Aquí registras compras a proveedores, pago de pasajes, o gastos de emergencia.</div>""", unsafe_allow_html=True)
         with st.form("form_gasto"):
             c1, c2 = st.columns(2)
-            razon = c1.text_input("Motivo")
-            monto = c2.number_input("Monto (S/)", min_value=0.1)
-            metodo_gasto = st.selectbox("Pagado con:", ["Efectivo", "Yape", "Otro"])
-            if st.form_submit_button("💸 Registrar"):
+            razon = c1.text_input("Descripción del Gasto")
+            monto = c2.number_input("Monto gastado (S/)", min_value=0.1)
+            metodo_gasto = st.selectbox("Dinero sacado de:", ["Efectivo (Caja)", "Yape (Digital)", "Otro"])
+            if st.form_submit_button("💸 Registrar Salida de Dinero"):
                 if razon and monto > 0:
                     run_query("INSERT INTO gastos (razon, monto, metodo_pago, fecha) VALUES (?,?,?,?)", 
                               (razon, monto, metodo_gasto, get_hora_peru()))
                     st.success(f"Gasto registrado: S/ {monto}")
                     st.rerun()
-                else: st.warning("Faltan datos")
+                else: st.warning("Completa los datos")
         
         st.subheader("Gastos Recientes")
         df_g = run_query("SELECT * FROM gastos ORDER BY id DESC", return_data=True)
         if not df_g.empty:
             df_g['fecha'] = pd.to_datetime(df_g['fecha']).dt.tz_convert('America/Lima')
             st.dataframe(df_g, use_container_width=True)
-            with st.expander("Eliminar Gasto"):
+            with st.expander("Eliminar Gasto (Corrección)"):
                 for i, r in df_g.iterrows():
                     c1, c2 = st.columns([4,1])
                     c1.write(f"{r['razon']} - S/{r['monto']}")
@@ -444,21 +475,17 @@ def main():
                         st.rerun()
 
     # -----------------------------------------------------------
-    # 2. CIERRE DE CAJA
+    # CIERRE DE CAJA
     # -----------------------------------------------------------
     elif opcion == "🔒 Cierre de Caja":
         st.header("Cierre de Caja")
-        st.markdown("""<div class="cierre-box">⚠️ Ambas opciones reinician el contador a 0.</div>""", unsafe_allow_html=True)
-        st.divider()
+        st.markdown("""<div class="cierre-box">⚠️ Ambas opciones generan el reporte PDF y reinician el contador a 0.</div>""", unsafe_allow_html=True)
         
         ultimo_cierre = get_ultimo_cierre()
-        
-        # VENTAS Y GASTOS DEL TURNO
         df_todas = run_query("SELECT * FROM ventas", return_data=True)
         df_g_all = run_query("SELECT * FROM gastos", return_data=True)
         df_turno = pd.DataFrame()
-        total_ventas = 0.0
-        total_gastos = 0.0
+        total_ventas, total_gastos = 0.0, 0.0
         
         if not df_todas.empty:
             df_todas['fecha'] = pd.to_datetime(df_todas['fecha']).dt.tz_convert('America/Lima')
@@ -471,98 +498,100 @@ def main():
             total_gastos = g_turno['monto'].sum()
         
         col_info, col_action = st.columns([2, 1])
-        
         with col_info:
-            inicio_str = ultimo_cierre.strftime('%d/%m %H:%M') if ultimo_cierre else 'Inicio'
-            st.caption(f"Desde: {inicio_str}")
+            inicio_str = ultimo_cierre.strftime('%d/%m %H:%M') if ultimo_cierre else 'Inicio histórico'
+            st.caption(f"Contabilizando desde: {inicio_str}")
             m1, m2, m3 = st.columns(3)
-            m1.metric("Ventas (+)", f"S/ {total_ventas:,.2f}")
+            m1.metric("Ingresos (+)", f"S/ {total_ventas:,.2f}")
             m2.metric("Gastos (-)", f"S/ {total_gastos:,.2f}")
-            m3.metric("Neto", f"S/ {(total_ventas - total_gastos):,.2f}")
+            m3.metric("Neto a Rendir", f"S/ {(total_ventas - total_gastos):,.2f}")
         
         with col_action:
-            responsable = st.text_input("Responsable")
-            if st.button("🔓 Cierre Turno"):
+            responsable = st.text_input("Nombre del Cajero")
+            if st.button("🔓 Cierre de Turno"):
                 if responsable:
                     cerrar_turno_db(total_ventas, responsable, "TURNO")
                     try:
                         ahora = get_hora_peru().strftime('%d-%m-%Y_%H-%M')
                         pdf = generar_pdf(df_turno, total_ventas, ahora, f"Cierre Turno - {responsable}", total_gastos)
                         guardar_pdf_en_bd(f"Turno_{ahora}.pdf", pdf)
-                        st.download_button("⬇️ PDF", pdf, f"Turno_{ahora}.pdf", "application/pdf")
-                        st.success("Hecho.")
-                    except: st.error("Error PDF")
-                else: st.warning("Nombre?")
+                        st.download_button("⬇️ Descargar PDF Turno", pdf, f"Turno_{ahora}.pdf", "application/pdf")
+                        st.success("Turno cerrado con éxito.")
+                    except: st.error("Error al crear PDF")
+                else: st.warning("Ingresa un responsable")
             
-            if st.button("🏁 CIERRE DÍA", type="primary"):
+            if st.button("🏁 CIERRE DEFINITIVO (DÍA)", type="primary"):
                 if responsable:
                     cerrar_turno_db(total_ventas, responsable, "DEFINITIVO")
                     try:
                         ahora = get_hora_peru().strftime('%d-%m-%Y_%H-%M')
-                        pdf = generar_pdf(df_turno, total_ventas, ahora, f"FINAL - {responsable}", total_gastos)
+                        pdf = generar_pdf(df_turno, total_ventas, ahora, f"CIERRE FINAL - {responsable}", total_gastos)
                         guardar_pdf_en_bd(f"FINAL_{ahora}.pdf", pdf)
-                        st.download_button("⬇️ PDF FINAL", pdf, f"FINAL_{ahora}.pdf", "application/pdf")
-                        st.success("Hecho.")
-                    except: st.error("Error PDF")
-                else: st.warning("Nombre?")
+                        st.download_button("⬇️ Descargar PDF Final", pdf, f"FINAL_{ahora}.pdf", "application/pdf")
+                        st.success("Día cerrado correctamente.")
+                    except: st.error("Error al crear PDF")
+                else: st.warning("Ingresa un responsable")
         
         if not df_turno.empty:
-            with st.expander("📝 Eliminar Ventas del Turno (Devuelve Stock)"):
+            st.divider()
+            with st.expander("🛠️ Eliminar Ventas del Turno Actual (Devuelve al Inventario)"):
                 for i, row in df_turno.iterrows():
                     c1, c2, c3 = st.columns([4, 2, 1])
-                    c1.write(f"{row['producto_nombre']} ({row['cantidad']})")
+                    c1.write(f"{row['producto_nombre']} (x{row['cantidad']})")
                     c2.write(f"S/ {row['total']}")
-                    if c3.button("❌", key=f"dvt_{row['id']}"):
-                        revertir_stock_por_eliminacion(row['id']) # <--- RESTAURA STOCK
+                    if c3.button("❌ Borrar", key=f"dvt_{row['id']}"):
+                        revertir_stock_por_eliminacion(row['id'])
                         run_query("DELETE FROM ventas WHERE id=?", (row['id'],))
-                        st.success("Venta eliminada y stock restaurado.")
+                        st.success("Venta eliminada y stock restaurado")
                         st.rerun()
 
     # -----------------------------------------------------------
-    # 3. INVENTARIO
+    # INVENTARIO
     # -----------------------------------------------------------
     elif opcion == "📦 Inventario":
-        st.header("Inventario")
-        tab1, tab2, tab3 = st.tabs(["Stock", "Compras", "Kardex"])
+        st.header("Gestión de Inventario")
+        tab1, tab2, tab3 = st.tabs(["📦 Mi Stock", "🛒 Ingresar Mercadería", "📜 Kardex (Historial)"])
         with tab1:
+            st.caption("Haz doble click en cualquier cantidad para corregirla manualmente.")
             df_i = run_query("SELECT * FROM insumos ORDER BY cantidad ASC", return_data=True)
             edited_df = st.data_editor(df_i, key="ed_st", hide_index=True, use_container_width=True, column_config={"id": st.column_config.NumberColumn(disabled=True)})
             if not df_i.equals(edited_df):
                 for i, r in edited_df.iterrows():
                     run_query("UPDATE insumos SET nombre=?, cantidad=?, unidad=?, minimo=? WHERE id=?", (r['nombre'], r['cantidad'], r['unidad'], r['minimo'], r['id']))
-                st.toast("Guardado")
+                st.toast("Inventario Actualizado")
         with tab2:
-            st.markdown("""<div class="compra-box">Registrar Compras</div>""", unsafe_allow_html=True)
-            mode = st.radio("Tipo:", ["Reponer", "Nuevo"], horizontal=True)
-            if mode == "Reponer":
+            st.markdown("""<div class="compra-box">Registrar compras para sumar al stock.</div>""", unsafe_allow_html=True)
+            mode = st.radio("¿Qué vas a ingresar?", ["Reponer Insumo Existente", "Crear Nuevo Insumo"], horizontal=True)
+            if mode == "Reponer Insumo Existente":
                 df_x = run_query("SELECT * FROM insumos", return_data=True)
                 if not df_x.empty:
                     with st.form("rep"):
                         c1, c2 = st.columns(2)
                         ins = c1.selectbox("Insumo", df_x['nombre'].unique())
-                        t_dato = c2.radio("Medida", ["Unidades", "Decimales"], horizontal=True)
+                        t_dato = c2.radio("Tipo de Medida", ["Unidades (1, 2, 3)", "Decimales (1.5 Litros)"], horizontal=True)
                         step = 1.0 if "Unidades" in t_dato else 0.1
                         fmt = "%d" if "Unidades" in t_dato else "%.2f"
-                        cant = st.number_input("Cantidad", step=step, format=fmt, min_value=0.1)
-                        nota = st.text_input("Nota")
-                        if st.form_submit_button("Sumar"):
+                        min_v = 1.0 if "Unidades" in t_dato else 0.1
+                        cant = st.number_input("Cantidad", step=step, format=fmt, min_value=min_v)
+                        nota = st.text_input("Nota / Factura")
+                        if st.form_submit_button("Sumar al Stock"):
                             run_query("UPDATE insumos SET cantidad=cantidad+? WHERE nombre=?", (cant, ins))
                             log_movimiento(ins, cant, 'ENTRADA', f"Compra: {nota}")
-                            st.success("Listo")
+                            st.success("Stock actualizado")
             else:
                 with st.form("new"):
                     c1, c2 = st.columns(2)
-                    n = c1.text_input("Nombre")
-                    u = c2.text_input("Unidad")
+                    n = c1.text_input("Nombre del Insumo")
+                    u = c2.text_input("Unidad (Cajas, Litros)")
                     c3, c4 = st.columns(2)
-                    t_dato = st.radio("Medida", ["Unidades", "Decimales"], horizontal=True)
+                    t_dato = st.radio("Tipo de Medida", ["Unidades", "Decimales"], horizontal=True)
                     step = 1.0 if "Unidades" in t_dato else 0.1
                     fmt = "%d" if "Unidades" in t_dato else "%.2f"
-                    q = c3.number_input("Cant", step=step, format=fmt)
-                    m = c4.number_input("Min", 5.0)
-                    if st.form_submit_button("Crear"):
+                    q = c3.number_input("Cantidad Inicial", step=step, format=fmt, min_value=0.0)
+                    m = c4.number_input("Alerta Mínimo", 5.0)
+                    if st.form_submit_button("Crear Insumo"):
                         run_query("INSERT INTO insumos (nombre, cantidad, unidad, minimo) VALUES (?,?,?,?)", (n, q, u, m))
-                        log_movimiento(n, q, 'ENTRADA', 'Nuevo')
+                        log_movimiento(n, q, 'ENTRADA', 'Insumo Nuevo')
                         st.success("Creado")
                         st.rerun()
         with tab3:
@@ -572,10 +601,11 @@ def main():
                 st.dataframe(df_k, use_container_width=True)
 
     # -----------------------------------------------------------
-    # 4. MERMAS
+    # MERMAS
     # -----------------------------------------------------------
     elif opcion == "📉 Mermas":
-        st.header("Mermas")
+        st.header("Mermas (Pérdidas)")
+        st.markdown("""<div class="merma-box">Descuenta productos dañados o vencidos sin afectar el dinero de caja.</div>""", unsafe_allow_html=True)
         df_ins = run_query("SELECT * FROM insumos", return_data=True)
         if not df_ins.empty:
             with st.form("merm"):
@@ -585,61 +615,63 @@ def main():
                 step = 1.0 if "Unidades" in t_dato else 0.1
                 fmt = "%d" if "Unidades" in t_dato else "%.2f"
                 q = st.number_input("Cantidad", step=step, format=fmt, min_value=0.1)
-                r = st.text_input("Razón")
-                if st.form_submit_button("Registrar"):
+                r = st.text_input("Razón (Se cayó, venció, etc)")
+                if st.form_submit_button("Registrar Salida"):
                     run_query("UPDATE insumos SET cantidad=cantidad-? WHERE nombre=?", (q, i_sel))
                     run_query("INSERT INTO mermas (insumo_nombre, cantidad, razon, fecha) VALUES (?,?,?,?)", (i_sel, q, r, get_hora_peru()))
                     log_movimiento(i_sel, q, 'SALIDA', f"Merma: {r}")
-                    st.error("Registrado")
+                    st.error("Descontado del inventario")
 
     # -----------------------------------------------------------
-    # 5. PRODUCTOS
+    # PRODUCTOS
     # -----------------------------------------------------------
     elif opcion == "📝 Productos":
-        st.header("Productos")
-        with st.expander("Nuevo"):
+        st.header("Menú y Precios")
+        with st.expander("➕ Crear Nuevo Producto"):
             with st.form("np"):
-                n = st.text_input("Nombre")
-                p = st.number_input("Precio", 0.0)
-                cat = st.selectbox("Cat", ["Helado", "Paleta", "Bebida", "Otro"])
-                vinc = st.checkbox("Inventario", True)
+                n = st.text_input("Nombre del Producto")
+                p = st.number_input("Precio (S/)", 0.0)
+                cat = st.selectbox("Categoría", ["Helado", "Paleta", "Bebida", "Postre", "Otro"])
+                vinc = st.checkbox("¿Descuenta Inventario al Vender?", True)
                 iid = None
                 qg = 0
                 if vinc:
                     df_i = run_query("SELECT * FROM insumos", return_data=True)
                     if not df_i.empty:
                         mapper = {row['nombre']:row['id'] for i,row in df_i.iterrows()}
-                        s = st.selectbox("Gasta", list(mapper.keys()))
+                        s = st.selectbox("Consume el insumo:", list(mapper.keys()))
                         iid = mapper[s]
-                        qg = st.number_input("Cant", 0.1)
-                if st.form_submit_button("Guardar"):
+                        qg = st.number_input("Cantidad a descontar por venta:", 0.1)
+                if st.form_submit_button("Guardar en el Menú"):
                     pid = run_query("INSERT INTO menu (nombre, precio, categoria) VALUES (?,?,?)", (n, p, cat))
                     if vinc and iid:
                         run_query("INSERT INTO recetas (menu_id, insumo_id, cantidad_insumo) VALUES (?,?,?)", (pid, iid, qg))
-                    st.success("Ok")
+                    st.success("Guardado")
                     st.rerun()
+        
+        st.subheader("Catálogo Actual")
         df_m = run_query("SELECT * FROM menu", return_data=True)
         if not df_m.empty:
             for i,r in df_m.iterrows():
                 c1,c2,c3 = st.columns([3,1,1])
-                c1.write(r['nombre'])
-                c2.write(r['precio'])
-                if c3.button("🗑️", key=f"dp{r['id']}"):
+                c1.write(f"🍨 **{r['nombre']}**")
+                c2.write(f"S/ {r['precio']}")
+                if c3.button("🗑️ Eliminar", key=f"dp{r['id']}"):
                     run_query("DELETE FROM menu WHERE id=?", (r['id'],))
                     run_query("DELETE FROM recetas WHERE menu_id=?", (r['id'],))
                     st.rerun()
 
     # -----------------------------------------------------------
-    # 6. REPORTES
+    # REPORTES
     # -----------------------------------------------------------
     elif opcion == "📊 Reportes":
-        st.header("Reportes")
-        tab_dia, tab_cierres, tab_pdfs = st.tabs(["Ventas del Día", "Cierres", "Historial PDF"])
+        st.header("Análisis y Reportes")
+        tab_dia, tab_cierres, tab_pdfs = st.tabs(["📈 Ventas del Día", "🗓️ Cierres Históricos", "🗄️ Historial PDFs"])
         
         hoy = get_hora_peru().date()
         
         with tab_dia:
-            st.write(f"Total Día: **{hoy}**")
+            st.write(f"Resumen Financiero del: **{hoy}**")
             df_v = run_query("SELECT * FROM ventas ORDER BY id DESC", return_data=True)
             df_g = run_query("SELECT * FROM gastos", return_data=True)
             
@@ -651,7 +683,6 @@ def main():
                 df_v['fecha'] = pd.to_datetime(df_v['fecha']).dt.tz_convert('America/Lima')
                 v_hoy = df_v[df_v['fecha'].dt.date == hoy]
                 tot_v = v_hoy['total'].sum()
-                # Calculo desglose
                 for _, r in v_hoy.iterrows():
                     if "Efectivo" in r['metodo_pago']: tot_efectivo += r['total']
                     else: tot_yape += r['total']
@@ -662,27 +693,26 @@ def main():
                 tot_g = g_hoy['monto'].sum()
             
             c1, c2, c3 = st.columns(3)
-            c1.metric("Venta Bruta", f"S/ {tot_v:,.2f}")
-            c2.metric("Gastos", f"S/ {tot_g:,.2f}")
-            c3.metric("GANANCIA", f"S/ {(tot_v - tot_g):,.2f}")
+            c1.metric("Venta Bruta Total", f"S/ {tot_v:,.2f}")
+            c2.metric("Gastos Totales", f"S/ {tot_g:,.2f}")
+            c3.metric("GANANCIA NETA DÍA", f"S/ {(tot_v - tot_g):,.2f}", delta_color="normal")
             
-            st.info(f"💵 Efectivo: S/ {tot_efectivo:,.2f} | 📱 Digital: S/ {tot_yape:,.2f}")
+            st.info(f"💵 Efectivo: **S/ {tot_efectivo:,.2f}** &nbsp; | &nbsp; 📱 Digital: **S/ {tot_yape:,.2f}**")
             
             c1, c2 = st.columns(2)
             try:
-                pdf = generar_pdf(v_hoy, tot_v, str(hoy), "Reporte Global", tot_g)
-                c1.download_button("PDF Día", pdf, f"Dia_{hoy}.pdf")
+                pdf = generar_pdf(v_hoy, tot_v, str(hoy), "Reporte Diario Global", tot_g)
+                c1.download_button("📄 PDF del Día", pdf, f"Dia_{hoy}.pdf", use_container_width=True)
             except: pass
             
             if not v_hoy.empty:
-                # Excel
                 v_hoy_exc = v_hoy.copy()
                 v_hoy_exc['fecha'] = v_hoy_exc['fecha'].astype(str)
                 buff = io.BytesIO()
                 with pd.ExcelWriter(buff, engine='openpyxl') as w: v_hoy_exc.to_excel(w, index=False)
-                c2.download_button("Excel", buff.getvalue(), f"Dia_{hoy}.xlsx")
+                c2.download_button("📊 Excel del Día", buff.getvalue(), f"Dia_{hoy}.xlsx", use_container_width=True)
                 
-                with st.expander("Eliminar Ventas Históricas (Devuelve Stock)"):
+                with st.expander("Eliminar Ventas Antiguas (Restaura Stock)"):
                     for i, r in v_hoy.iterrows():
                         cols = st.columns([2, 2, 1])
                         cols[0].write(r['producto_nombre'])
@@ -695,37 +725,42 @@ def main():
         with tab_cierres:
             df_c = run_query("SELECT * FROM cierres ORDER BY id DESC", return_data=True)
             if not df_c.empty:
-                df_c['fecha_cierre'] = pd.to_datetime(df_c['fecha_cierre']).dt.tz_convert('America/Lima').dt.strftime('%d/%m %H:%M')
+                df_c['fecha_cierre'] = pd.to_datetime(df_c['fecha_cierre']).dt.tz_convert('America/Lima').dt.strftime('%d/%m/%Y %H:%M')
                 st.dataframe(df_c, use_container_width=True)
 
         with tab_pdfs:
+            st.caption("PDFs de cierres guardados automáticamente.")
             df_p = run_query("SELECT id, fecha, nombre_archivo, pdf_data FROM reportes_pdf ORDER BY id DESC", return_data=True)
             if not df_p.empty:
                 for i, r in df_p.iterrows():
                     c1, c2, c3 = st.columns([3, 1, 1])
-                    c1.write(r['nombre_archivo'])
-                    c2.download_button("⬇️", r['pdf_data'], r['nombre_archivo'])
-                    if c3.button("🗑️", key=f"dpdf_{r['id']}"):
+                    c1.write(f"📄 **{r['nombre_archivo']}**")
+                    c2.download_button("⬇️ Descargar", r['pdf_data'], r['nombre_archivo'])
+                    if c3.button("🗑️ Borrar", key=f"dpdf_{r['id']}"):
                         run_query("DELETE FROM reportes_pdf WHERE id=?", (r['id'],))
                         st.rerun()
 
     # -----------------------------------------------------------
-    # 7. RESPALDO
+    # RESPALDO
     # -----------------------------------------------------------
     elif opcion == "💾 Respaldo":
-        st.header("Respaldo")
+        st.header("Copia de Seguridad (Respaldo)")
+        st.markdown("""<div class='respaldo-box'>Descarga tu copia diariamente para evitar pérdida de datos si el servidor se reinicia.</div>""", unsafe_allow_html=True)
+        st.divider()
         c1, c2 = st.columns(2)
         with c1:
-            if st.button("⬇️ Descargar BD"):
+            st.subheader("Paso 1: Guardar")
+            if st.button("⬇️ Generar archivo de Base de Datos"):
                 try:
                     with open(DB_NAME, "rb") as fp:
-                        st.download_button("Guardar .db", fp, f"Respaldo_{get_hora_peru().date()}.db")
-                except: st.error("Error BD")
+                        st.download_button("💾 Guardar .db en mi PC/Celular", fp, f"Neverita_{get_hora_peru().date()}.db", type="primary")
+                except: st.error("No hay BD generada aún.")
         with c2:
-            up = st.file_uploader("Subir .db", type="db")
-            if up and st.button("Restaurar"):
+            st.subheader("Paso 2: Restaurar")
+            up = st.file_uploader("Sube tu archivo .db aquí", type="db")
+            if up and st.button("🔄 Restaurar Sistema"):
                 with open(DB_NAME, "wb") as f: f.write(up.getbuffer())
-                st.success("Restaurado")
+                st.success("¡Base de datos restaurada! Se actualizará la pantalla.")
                 st.rerun()
 
 if __name__ == '__main__':
